@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "structlog>=24.0",
     "click>=8.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]
@@ -22,6 +23,7 @@ dev = [
     "ruff>=0.11",
     "mypy>=1.15",
     "pre-commit>=4.0",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 test = [
     "pytest>=8.0",
@@ -46,10 +48,13 @@ select = [
     "UP",     # pyupgrade
     "B",      # flake8-bugbear
     "SIM",    # flake8-simplify
-    "TC",    # flake8-type-checking
+    "TC",     # flake8-type-checking
     "RUF",    # ruff-specific rules
     "PL",     # pylint
     "D",      # pydocstyle
+]
+ignore = [
+    "TC003",  # Path is used at runtime throughout (filesystem tool)
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -58,6 +63,7 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D", "PLR2004", "PLR0913"]
 "src/**/config.py" = ["TC002"] # pydantic types used at runtime for validation
+"src/**/cli.py" = ["PLR0913"]  # click commands have many parameters by nature
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -94,7 +100,16 @@ addopts = "--strict-markers --cov=src/kdrift --cov-branch --cov-report=term-miss
 [tool.coverage.run]
 source = ["src/kdrift"]
 branch = true
+omit = [
+    "src/kdrift/__main__.py",
+]
 
 [tool.coverage.report]
 fail_under = 80
 show_missing = true
+exclude_lines = [
+    "if __name__",
+]
+omit = [
+    "src/kdrift/__main__.py",
+]
