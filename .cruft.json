@@ -1,0 +1,21 @@
+{
+  "template": "https://github.com/missionlane/templates",
+  "commit": "81b9e092d4929564ea2805dc3f6c357765b2b6ee",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "kdrift",
+      "project_slug": "kdrift",
+      "package_name": "kdrift",
+      "description": "Kustomize manifest drift detection tool",
+      "python_version": "3.13",
+      "sonarqube_project_key": "mikedougherty.kdrift",
+      "has_web_server": "no",
+      "has_cli": "yes",
+      "needs_k8s_access": "no",
+      "_template": "https://github.com/missionlane/templates",
+      "_commit": "81b9e092d4929564ea2805dc3f6c357765b2b6ee"
+    }
+  },
+  "directory": "python-service"
+}

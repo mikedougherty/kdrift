@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kdrift"
+version = "0.1.0"
+description = "Kustomize manifest drift detection tool"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "structlog>=24.0",
+    "click>=8.0",
+]
+
+[project.scripts]
+kdrift = "kdrift.cli:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11",
+    "mypy>=1.15",
+    "pre-commit>=4.0",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "pytest-mock>=3.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kdrift"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes
+    "E", "W", # pycodestyle
+    "C90",    # mccabe complexity
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "TC",    # flake8-type-checking
+    "RUF",    # ruff-specific rules
+    "PL",     # pylint
+    "D",      # pydocstyle
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D", "PLR2004", "PLR0913"]
+"src/**/config.py" = ["TC002"] # pydantic types used at runtime for validation
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.mypy]
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+show_error_codes = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_equality = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# asyncio_mode = "auto"  # uncomment when adding pytest-asyncio to test deps
+markers = [
+    "unit: unit tests",
+    "integration: integration tests (may require external services)",
+]
+addopts = "--strict-markers --cov=src/kdrift --cov-branch --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=test-results/junit.xml"
+
+[tool.coverage.run]
+source = ["src/kdrift"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
