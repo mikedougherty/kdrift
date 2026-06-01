@@ -11,6 +11,7 @@ import structlog
 
 from kdrift import config, git, models, pipeline
 from kdrift import logging as kdrift_logging
+from kdrift import watch as kdrift_watch
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
@@ -26,6 +27,8 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
     default="unified",
     help="Output format.",
 )
+@click.option("--watch", "watch_mode", is_flag=True, help="Watch for changes and re-diff continuously.")
+@click.option("--check", is_flag=True, help="Exit non-zero if any overlay has drift (CI/pre-commit mode).")
 @click.option("--log-level", default="WARNING", help="Log level (DEBUG, INFO, WARNING, ERROR).")
 @click.pass_context
 def main(
@@ -34,6 +37,8 @@ def main(
     ref: str,
     overlay: str | None,
     output_format: str,
+    watch_mode: bool,
+    check: bool,
     log_level: str,
 ) -> None:
     """Kustomize manifest drift detection tool."""
@@ -57,8 +62,18 @@ def main(
         sys.exit(1)
 
     proj_config = config.load_project_config(repo_root)
-
     path_list = [Path(p) for p in paths] if paths else None
+
+    if watch_mode:
+        kdrift_watch.watch(
+            repo_root=repo_root,
+            ref=ref,
+            paths=path_list,
+            output_format=output_format,
+            kustomize_args=proj_config.kustomize_args,
+        )
+        return
+
     overlay_path = Path(overlay) if overlay else None
 
     try:
@@ -79,6 +94,8 @@ def main(
         _print_unified(result)
 
     if result.has_errors:
+        sys.exit(1)
+    if check and result.has_changes:
         sys.exit(1)
     if not result.has_changes:
         sys.exit(0)

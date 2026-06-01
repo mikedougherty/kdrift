@@ -13,6 +13,7 @@ dependencies = [
     "structlog>=24.0",
     "click>=8.0",
     "pyyaml>=6.0.3",
+    "watchfiles>=1.2.0",
 ]
 
 [project.scripts]
@@ -102,6 +103,7 @@ source = ["src/kdrift"]
 branch = true
 omit = [
     "src/kdrift/__main__.py",
+    "src/kdrift/watch.py",
 ]
 
 [tool.coverage.report]
@@ -109,7 +111,9 @@ fail_under = 80
 show_missing = true
 exclude_lines = [
     "if __name__",
+    "except KeyboardInterrupt",
 ]
 omit = [
     "src/kdrift/__main__.py",
+    "src/kdrift/watch.py",
 ]
