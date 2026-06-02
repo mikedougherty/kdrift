@@ -143,3 +143,11 @@ def _print_unified(result: models.DiffResult) -> None:
 
     for error in result.errors:
         click.echo(f"ERROR: {error}", err=True)
+
+
+@main.command()
+def mcp() -> None:
+    """Start the MCP server for AI agent integration."""
+    from kdrift import mcp_server
+
+    mcp_server.run_mcp_server()
