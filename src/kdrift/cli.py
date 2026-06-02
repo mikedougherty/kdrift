@@ -18,6 +18,7 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 @click.group(invoke_without_command=True)
 @click.argument("paths", nargs=-1, type=click.Path(exists=False))
+@click.option("--repo", "-C", "repo_path", type=click.Path(exists=True), default=None, help="Repository root.")
 @click.option("--ref", default="HEAD", help="Git ref for baseline comparison.")
 @click.option("--overlay", type=click.Path(), default=None, help="Diff only this overlay.")
 @click.option(
@@ -34,6 +35,7 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
 def main(
     ctx: click.Context,
     paths: tuple[str, ...],
+    repo_path: str | None,
     ref: str,
     overlay: str | None,
     output_format: str,
@@ -51,8 +53,9 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
+    start = Path(repo_path) if repo_path else (Path(paths[0]).resolve() if paths else None)
     try:
-        repo_root = git.find_repo_root()
+        repo_root = git.find_repo_root(start)
     except git.GitError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
