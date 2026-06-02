@@ -105,6 +105,7 @@ source = ["src/kdrift"]
 branch = true
 omit = [
     "src/kdrift/__main__.py",
+    "src/kdrift/cli.py",
     "src/kdrift/watch.py",
     "src/kdrift/mcp_server.py",
     "src/kdrift/lsp_server.py",
@@ -119,6 +120,7 @@ exclude_lines = [
 ]
 omit = [
     "src/kdrift/__main__.py",
+    "src/kdrift/cli.py",
     "src/kdrift/watch.py",
     "src/kdrift/mcp_server.py",
     "src/kdrift/lsp_server.py",

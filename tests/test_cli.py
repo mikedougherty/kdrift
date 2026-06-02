@@ -14,14 +14,29 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Kustomize manifest drift detection tool" in result.output
 
-    def test_no_repo_error(self, tmp_path):
-        runner = CliRunner()
-        result = runner.invoke(main, [], catch_exceptions=False)
-        assert result.exit_code in (0, 1)
-
-    def test_json_format_option(self):
+    def test_subcommands_listed(self):
         runner = CliRunner()
         result = runner.invoke(main, ["--help"])
+        assert "diff" in result.output
+        assert "mcp" in result.output
+        assert "lsp" in result.output
+
+    def test_diff_help(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", "--help"])
+        assert result.exit_code == 0
         assert "--format" in result.output
-        assert "unified" in result.output
-        assert "json" in result.output
+        assert "--check" in result.output
+        assert "--watch" in result.output
+
+    def test_lsp_subcommand_exists(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["lsp", "--help"])
+        assert result.exit_code == 0
+        assert "LSP server" in result.output
+
+    def test_mcp_subcommand_exists(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["mcp", "--help"])
+        assert result.exit_code == 0
+        assert "MCP server" in result.output

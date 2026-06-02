@@ -16,7 +16,20 @@ from kdrift import watch as kdrift_watch
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
-@click.group(invoke_without_command=True)
+@click.group()
+@click.option("--log-level", default="WARNING", help="Log level (DEBUG, INFO, WARNING, ERROR).")
+@click.pass_context
+def main(ctx: click.Context, log_level: str) -> None:
+    """Kustomize manifest drift detection tool."""
+    cfg = config.AppConfig()
+    kdrift_logging.configure_logging(log_level=log_level, log_format=cfg.log_format)
+
+    ctx.ensure_object(dict)
+    ctx.obj["config"] = cfg
+    ctx.obj["log_level"] = log_level
+
+
+@main.command()
 @click.argument("paths", nargs=-1, type=click.Path(exists=False))
 @click.option("--repo", "-C", "repo_path", type=click.Path(exists=True), default=None, help="Repository root.")
 @click.option("--ref", default="HEAD", help="Git ref for baseline comparison.")
@@ -30,9 +43,8 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
 )
 @click.option("--watch", "watch_mode", is_flag=True, help="Watch for changes and re-diff continuously.")
 @click.option("--check", is_flag=True, help="Exit non-zero if any overlay has drift (CI/pre-commit mode).")
-@click.option("--log-level", default="WARNING", help="Log level (DEBUG, INFO, WARNING, ERROR).")
 @click.pass_context
-def main(
+def diff(
     ctx: click.Context,
     paths: tuple[str, ...],
     repo_path: str | None,
@@ -41,18 +53,8 @@ def main(
     output_format: str,
     watch_mode: bool,
     check: bool,
-    log_level: str,
 ) -> None:
-    """Kustomize manifest drift detection tool."""
-    cfg = config.AppConfig()
-    kdrift_logging.configure_logging(log_level=log_level, log_format=cfg.log_format)
-
-    ctx.ensure_object(dict)
-    ctx.obj["config"] = cfg
-
-    if ctx.invoked_subcommand is not None:
-        return
-
+    """Diff kustomize overlays against a baseline ref."""
     start = Path(repo_path) if repo_path else (Path(paths[0]).resolve() if paths else None)
     try:
         repo_root = git.find_repo_root(start)
@@ -104,6 +106,22 @@ def main(
         sys.exit(0)
 
 
+@main.command()
+def mcp() -> None:
+    """Start the MCP server for AI agent integration."""
+    from kdrift import mcp_server
+
+    mcp_server.run_mcp_server()
+
+
+@main.command()
+def lsp() -> None:
+    """Start the LSP server for IDE integration."""
+    from kdrift import lsp_server
+
+    lsp_server.run_lsp_server()
+
+
 def _print_json(result: models.DiffResult) -> None:
     """Print structured JSON output."""
     output = json.loads(result.model_dump_json())
@@ -143,19 +161,3 @@ def _print_unified(result: models.DiffResult) -> None:
 
     for error in result.errors:
         click.echo(f"ERROR: {error}", err=True)
-
-
-@main.command()
-def mcp() -> None:
-    """Start the MCP server for AI agent integration."""
-    from kdrift import mcp_server
-
-    mcp_server.run_mcp_server()
-
-
-@main.command()
-def lsp() -> None:
-    """Start the LSP server for IDE integration."""
-    from kdrift import lsp_server
-
-    lsp_server.run_lsp_server()
