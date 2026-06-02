@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "watchfiles>=1.2.0",
     "mcp>=1.27.2",
+    "pygls>=2.1.1",
 ]
 
 [project.scripts]
@@ -106,6 +107,7 @@ omit = [
     "src/kdrift/__main__.py",
     "src/kdrift/watch.py",
     "src/kdrift/mcp_server.py",
+    "src/kdrift/lsp_server.py",
 ]
 
 [tool.coverage.report]
@@ -119,4 +121,5 @@ omit = [
     "src/kdrift/__main__.py",
     "src/kdrift/watch.py",
     "src/kdrift/mcp_server.py",
+    "src/kdrift/lsp_server.py",
 ]

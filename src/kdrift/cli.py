@@ -151,3 +151,11 @@ def mcp() -> None:
     from kdrift import mcp_server
 
     mcp_server.run_mcp_server()
+
+
+@main.command()
+def lsp() -> None:
+    """Start the LSP server for IDE integration."""
+    from kdrift import lsp_server
+
+    lsp_server.run_lsp_server()
