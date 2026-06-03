@@ -17,6 +17,7 @@ import yaml
 
 from kdrift import models
 
+_SafeLoader: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 KUSTOMIZATION_FILENAMES = ("kustomization.yaml", "kustomization.yml", "Kustomization")
@@ -205,7 +206,7 @@ def _is_parent_of(parent: Path, child: Path) -> bool:
 def _parse_references(kust_file: Path, repo_root: Path) -> list[Path]:
     """Extract all file/directory references from a kustomization.yaml."""
     with kust_file.open() as f:
-        data = yaml.safe_load(f)
+        data = yaml.load(f, Loader=_SafeLoader)
 
     if not isinstance(data, dict):
         return []

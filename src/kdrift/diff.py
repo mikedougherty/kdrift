@@ -17,6 +17,7 @@ import yaml
 
 from kdrift import models
 
+_SafeLoader: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 _KUSTOMIZE_HASH_CHARS = "bcdfghjklmnpqrstvwxz2456789"
 _HASH_SUFFIX_RE = re.compile(rf"^(.+)-[{_KUSTOMIZE_HASH_CHARS}]{{5,10}}$")
 
@@ -56,7 +57,7 @@ def _parse_resources(rendered: str) -> dict[models.ResourceId, str]:
             continue
 
         try:
-            parsed = yaml.safe_load(doc)
+            parsed = yaml.load(doc, Loader=_SafeLoader)
         except yaml.YAMLError:
             continue
 

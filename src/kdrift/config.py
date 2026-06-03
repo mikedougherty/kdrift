@@ -9,6 +9,8 @@ import pydantic
 import pydantic_settings
 import yaml
 
+_SafeLoader: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 
 class AppConfig(pydantic_settings.BaseSettings):
     """Application configuration loaded from environment variables."""
@@ -96,7 +98,7 @@ def _load_yaml(path: Path) -> dict[str, object] | None:
     """Load a YAML file, returning None on error."""
     try:
         with path.open() as f:
-            data = yaml.safe_load(f)
+            data = yaml.load(f, Loader=_SafeLoader)
         if isinstance(data, dict):
             return data
     except (yaml.YAMLError, OSError):
