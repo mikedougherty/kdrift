@@ -11,6 +11,8 @@ Configure in VS Code settings.json, Neovim lspconfig, or any LSP client.
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
 from pathlib import Path
 
 import lsprotocol.types as lsp
@@ -21,7 +23,32 @@ from kdrift import config, discover, git, pipeline
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
-server = LanguageServer(
+
+def _safe_handler[T](fn: Callable[..., T]) -> Callable[..., T | None]:
+    """Wrap an LSP handler to catch and log all exceptions without crashing the server."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: object, **kwargs: object) -> T | None:
+        try:
+            return fn(*args, **kwargs)
+        except (SystemExit, KeyboardInterrupt):
+            raise
+        except Exception:
+            log.exception("lsp_handler_error", handler=fn.__name__)
+            return None
+
+    return wrapper
+
+
+class KdriftLanguageServer(LanguageServer):
+    """LanguageServer subclass that logs errors instead of crashing."""
+
+    def report_server_error(self, error: Exception, source: object) -> None:
+        """Log all server errors to file instead of showing popups."""
+        log.exception("lsp_server_error", source=str(source), error=str(error))
+
+
+server = KdriftLanguageServer(
     name="kdrift-lsp",
     version="0.1.0",
     text_document_sync_kind=lsp.TextDocumentSyncKind.Full,
@@ -63,6 +90,7 @@ def _uri_to_path(uri: str) -> Path:
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_SAVE)
+@_safe_handler
 def did_save(params: lsp.DidSaveTextDocumentParams) -> None:
     """Run drift detection on save and publish diagnostics."""
     file_path = _uri_to_path(params.text_document.uri)
@@ -172,6 +200,7 @@ def did_save(params: lsp.DidSaveTextDocumentParams) -> None:
 
 
 @server.feature(lsp.TEXT_DOCUMENT_CODE_LENS)
+@_safe_handler
 def code_lens(params: lsp.CodeLensParams) -> list[lsp.CodeLens]:
     """Show overlay impact as CodeLens annotations on kustomization.yaml files."""
     file_path = _uri_to_path(params.text_document.uri)
@@ -231,6 +260,7 @@ def code_lens(params: lsp.CodeLensParams) -> list[lsp.CodeLens]:
 
 
 @server.feature(lsp.TEXT_DOCUMENT_HOVER)
+@_safe_handler
 def hover(params: lsp.HoverParams) -> lsp.Hover | None:
     """Show affected overlay info on hover."""
     file_path = _uri_to_path(params.text_document.uri)
