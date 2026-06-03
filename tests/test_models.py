@@ -93,6 +93,14 @@ class TestDiffResult:
         result = models.DiffResult(ref="abc1234", errors=["something went wrong"])
         assert result.has_errors
 
+    def test_target_ref_default_none(self):
+        result = models.DiffResult(ref="abc1234")
+        assert result.target_ref is None
+
+    def test_target_ref_set(self):
+        result = models.DiffResult(ref="abc1234", target_ref="def5678")
+        assert result.target_ref == "def5678"
+
 
 @pytest.mark.unit
 class TestRenderResult:

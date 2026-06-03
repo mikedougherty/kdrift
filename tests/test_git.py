@@ -84,6 +84,62 @@ class TestChangedFiles:
 
 
 @pytest.mark.unit
+class TestChangedFilesBetween:
+    def test_detects_changes_between_refs(self, git_repo):
+        # Make a second commit
+        (git_repo / "second.txt").write_text("second\n")
+        subprocess.run(["git", "-C", str(git_repo), "add", "second.txt"], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(git_repo), "commit", "-m", "second"],
+            capture_output=True,
+            check=True,
+        )
+        changed = git.changed_files_between("HEAD~1", "HEAD", repo_root=git_repo)
+        assert any("second.txt" in str(f) for f in changed)
+
+    def test_no_changes_same_ref(self, git_repo):
+        changed = git.changed_files_between("HEAD", "HEAD", repo_root=git_repo)
+        assert changed == []
+
+    def test_scoped_to_path(self, git_repo):
+        sub = git_repo / "sub"
+        sub.mkdir()
+        (sub / "a.txt").write_text("new\n")
+        (git_repo / "root.txt").write_text("also new\n")
+        subprocess.run(["git", "-C", str(git_repo), "add", "."], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(git_repo), "commit", "-m", "add files"],
+            capture_output=True,
+            check=True,
+        )
+        changed = git.changed_files_between("HEAD~1", "HEAD", paths=[Path("sub")], repo_root=git_repo)
+        assert any("a.txt" in str(f) for f in changed)
+        assert not any("root.txt" in str(f) for f in changed)
+
+    def test_multiple_commits(self, git_repo):
+        # Make two more commits
+        (git_repo / "a.txt").write_text("a\n")
+        subprocess.run(["git", "-C", str(git_repo), "add", "a.txt"], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(git_repo), "commit", "-m", "add a"],
+            capture_output=True,
+            check=True,
+        )
+        (git_repo / "b.txt").write_text("b\n")
+        subprocess.run(["git", "-C", str(git_repo), "add", "b.txt"], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(git_repo), "commit", "-m", "add b"],
+            capture_output=True,
+            check=True,
+        )
+        # HEAD~2..HEAD should show both files
+        changed = git.changed_files_between("HEAD~2", "HEAD", repo_root=git_repo)
+        names = {str(f) for f in changed}
+        assert "a.txt" in names
+        assert "b.txt" in names
+
+
+@pytest.mark.unit
 class TestHasCommits:
     def test_has_commits(self, git_repo):
         assert git.has_commits(git_repo)

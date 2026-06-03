@@ -1,9 +1,41 @@
 """Tests for the CLI entrypoint."""
 
+import click
 import pytest
 from click.testing import CliRunner
 
-from kdrift.cli import main
+from kdrift.cli import _parse_ref_range, main
+
+
+@pytest.mark.unit
+class TestParseRefRange:
+    def test_single_ref(self):
+        base, target = _parse_ref_range("HEAD")
+        assert base == "HEAD"
+        assert target is None
+
+    def test_ref_range(self):
+        base, target = _parse_ref_range("main~5..main~2")
+        assert base == "main~5"
+        assert target == "main~2"
+
+    def test_sha_range(self):
+        base, target = _parse_ref_range("abc1234..def5678")
+        assert base == "abc1234"
+        assert target == "def5678"
+
+    def test_empty_left_side(self):
+        with pytest.raises(click.BadParameter, match="both sides"):
+            _parse_ref_range("..HEAD")
+
+    def test_empty_right_side(self):
+        with pytest.raises(click.BadParameter, match="both sides"):
+            _parse_ref_range("HEAD..")
+
+    def test_branch_names_with_slashes(self):
+        base, target = _parse_ref_range("origin/main..feature/foo")
+        assert base == "origin/main"
+        assert target == "feature/foo"
 
 
 @pytest.mark.unit
@@ -40,3 +72,14 @@ class TestCLI:
         result = runner.invoke(main, ["mcp", "--help"])
         assert result.exit_code == 0
         assert "MCP server" in result.output
+
+    def test_diff_ref_range_help(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", "--help"])
+        assert "A..B" in result.output
+
+    def test_diff_watch_with_ref_range_errors(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", "--ref", "HEAD~1..HEAD", "--watch"])
+        assert result.exit_code != 0
+        assert "not supported with ref ranges" in result.output

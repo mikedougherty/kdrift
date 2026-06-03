@@ -38,8 +38,13 @@ def kdrift_diff(
     ref: str = "HEAD",
     paths: list[str] | None = None,
     overlay: str | None = None,
+    target_ref: str | None = None,
 ) -> str:
-    """Run the full diff pipeline and return structured JSON results."""
+    """Run the full diff pipeline and return structured JSON results.
+
+    When target_ref is provided, compares ref (baseline) vs target_ref
+    instead of ref vs working tree.
+    """
     repo_root = git.find_repo_root(Path(repo_path))
     proj_config = config.load_project_config(repo_root)
 
@@ -52,6 +57,7 @@ def kdrift_diff(
         paths=path_list,
         overlay_filter=overlay_filter,
         kustomize_args=proj_config.kustomize_args,
+        target_ref=target_ref,
     )
 
     return result.model_dump_json(indent=2)

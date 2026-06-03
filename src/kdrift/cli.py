@@ -29,10 +29,21 @@ def main(ctx: click.Context, log_level: str) -> None:
     ctx.obj["log_level"] = log_level
 
 
+def _parse_ref_range(ref: str) -> tuple[str, str | None]:
+    """Parse a ref or ref range (A..B) into (base_ref, target_ref)."""
+    if ".." in ref:
+        parts = ref.split("..", 1)
+        if not parts[0] or not parts[1]:
+            msg = f"Invalid ref range '{ref}': both sides of '..' are required"
+            raise click.BadParameter(msg, param_hint="'--ref'")
+        return parts[0], parts[1]
+    return ref, None
+
+
 @main.command()
 @click.argument("paths", nargs=-1, type=click.Path(exists=False))
 @click.option("--repo", "-C", "repo_path", type=click.Path(exists=True), default=None, help="Repository root.")
-@click.option("--ref", default="HEAD", help="Git ref for baseline comparison.")
+@click.option("--ref", default="HEAD", help="Git ref for baseline, or A..B for two-ref comparison.")
 @click.option("--overlay", type=click.Path(), default=None, help="Diff only this overlay.")
 @click.option(
     "--format",
@@ -66,13 +77,18 @@ def diff(
         click.echo("Error: repository has no commits yet", err=True)
         sys.exit(1)
 
+    base_ref, target_ref = _parse_ref_range(ref)
+
     proj_config = config.load_project_config(repo_root)
     path_list = [Path(p) for p in paths] if paths else None
 
     if watch_mode:
+        if target_ref is not None:
+            click.echo("Error: --watch is not supported with ref ranges (A..B)", err=True)
+            sys.exit(1)
         kdrift_watch.watch(
             repo_root=repo_root,
-            ref=ref,
+            ref=base_ref,
             paths=path_list,
             output_format=output_format,
             kustomize_args=proj_config.kustomize_args,
@@ -84,10 +100,11 @@ def diff(
     try:
         result = pipeline.run_diff(
             repo_root=repo_root,
-            ref=ref,
+            ref=base_ref,
             paths=path_list,
             overlay_filter=overlay_path,
             kustomize_args=proj_config.kustomize_args,
+            target_ref=target_ref,
         )
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
