@@ -60,6 +60,7 @@ server = KdriftLanguageServer(
 _graph: discover.DependencyGraph | None = None
 _repo_root: Path | None = None
 _graph_stale: bool = True
+_last_saved_uri: str | None = None
 
 _MAX_CODELENS_OVERLAYS = 5
 
@@ -130,6 +131,8 @@ def on_initialized(params: lsp.InitializedParams) -> None:
 @_safe_handler
 def did_save(params: lsp.DidSaveTextDocumentParams) -> None:
     """Run drift detection on save and publish diagnostics."""
+    global _last_saved_uri  # noqa: PLW0603
+    _last_saved_uri = params.text_document.uri
     file_path = _uri_to_path(params.text_document.uri)
 
     if file_path.name in discover.KUSTOMIZATION_FILENAMES:
@@ -355,6 +358,14 @@ def _reload_engine(signum: int, frame: object) -> None:
             message=f"kdrift engine reloaded ({len(reloaded)} modules)",
         )
     )
+
+    if _last_saved_uri is not None:
+        log.info("replay_last_save", uri=_last_saved_uri)
+        did_save(
+            lsp.DidSaveTextDocumentParams(
+                text_document=lsp.TextDocumentIdentifier(uri=_last_saved_uri),
+            )
+        )
 
 
 def run_lsp_server() -> None:
