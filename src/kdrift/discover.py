@@ -38,8 +38,11 @@ class DependencyGraph:
         """Initialize with the repository root path."""
         self.repo_root = repo_root
         self._file_to_overlays: dict[Path, set[Path]] = {}
+        self._dir_to_overlays: dict[Path, set[Path]] = {}
         self._overlay_dirs: set[Path] = set()
         self._parent_of: dict[Path, set[Path]] = {}
+        self._leaf_overlays: list[models.Overlay] | None = None
+        self._kust_file_cache: dict[Path, Path | None] = {}
         self._built = False
 
     def build(self) -> None:
@@ -53,6 +56,7 @@ class DependencyGraph:
         for kust_file in kust_files:
             overlay_dir = kust_file.parent.relative_to(self.repo_root)
             self._overlay_dirs.add(overlay_dir)
+            self._kust_file_cache[overlay_dir] = kust_file
 
             try:
                 refs = _parse_references(kust_file, self.repo_root)
@@ -68,6 +72,7 @@ class DependencyGraph:
                     ref_overlay = ref_path
                     self._parent_of.setdefault(ref_overlay, set()).add(overlay_dir)
 
+        self._build_dir_index()
         self._built = True
         log.debug(
             "dependency_graph_built",
@@ -75,18 +80,26 @@ class DependencyGraph:
             files_tracked=len(self._file_to_overlays),
         )
 
+    def _build_dir_index(self) -> None:
+        """Build a directory-to-overlays index for fast prefix lookups."""
+        for file_path, overlay_dirs in self._file_to_overlays.items():
+            parent = file_path.parent
+            while str(parent) != ".":
+                self._dir_to_overlays.setdefault(parent, set()).update(overlay_dirs)
+                parent = parent.parent
+            self._dir_to_overlays.setdefault(parent, set()).update(overlay_dirs)
+
     @property
     def leaf_overlays(self) -> list[models.Overlay]:
         """Overlays that no other overlay references (deployment targets)."""
         self._ensure_built()
-        referenced_as_parent: set[Path] = set()
-        for parents in self._parent_of.values():
-            referenced_as_parent.update(parents)
+        if self._leaf_overlays is not None:
+            return self._leaf_overlays
 
         leaves: list[models.Overlay] = []
         for overlay_dir in sorted(self._overlay_dirs):
             if overlay_dir not in self._parent_of:
-                kust = _find_kustomization_in(self.repo_root / overlay_dir)
+                kust = self._kust_file_cache.get(overlay_dir)
                 if kust is not None:
                     leaves.append(
                         models.Overlay(
@@ -95,6 +108,7 @@ class DependencyGraph:
                         )
                     )
 
+        self._leaf_overlays = leaves
         return leaves
 
     def affected_overlays(self, changed_files: list[Path]) -> list[models.Overlay]:
@@ -106,9 +120,12 @@ class DependencyGraph:
             if changed in self._file_to_overlays:
                 affected_dirs.update(self._file_to_overlays[changed])
 
-            for tracked_path, overlay_dirs in self._file_to_overlays.items():
-                if _is_parent_of(changed, tracked_path) or _is_parent_of(tracked_path, changed):
-                    affected_dirs.update(overlay_dirs)
+            changed_dir = changed.parent
+            if changed_dir in self._dir_to_overlays:
+                affected_dirs.update(self._dir_to_overlays[changed_dir])
+
+            if changed in self._dir_to_overlays:
+                affected_dirs.update(self._dir_to_overlays[changed])
 
             if _is_kustomization_file(changed):
                 kust_dir = changed.parent
@@ -120,7 +137,7 @@ class DependencyGraph:
 
         result: list[models.Overlay] = []
         for d in sorted(result_dirs):
-            kust = _find_kustomization_in(self.repo_root / d)
+            kust = self._kust_file_cache.get(d)
             if kust is not None:
                 result.append(
                     models.Overlay(
@@ -152,10 +169,14 @@ class DependencyGraph:
 
 def _find_kustomization_files(repo_root: Path) -> list[Path]:
     """Find all kustomization.yaml files in the repository."""
+    names = set(KUSTOMIZATION_FILENAMES)
     results: list[Path] = []
-    for name in KUSTOMIZATION_FILENAMES:
-        results.extend(repo_root.rglob(name))
-    return sorted(set(results))
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fname in filenames:
+            if fname in names:
+                results.append(Path(dirpath) / fname)
+    return sorted(results)
 
 
 def _find_kustomization_in(directory: Path) -> Path | None:
