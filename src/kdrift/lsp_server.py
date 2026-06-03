@@ -56,30 +56,49 @@ server = KdriftLanguageServer(
 
 _graph: discover.DependencyGraph | None = None
 _repo_root: Path | None = None
+_graph_stale: bool = True
 
 _MAX_CODELENS_OVERLAYS = 5
 
 
 def _get_graph() -> tuple[discover.DependencyGraph, Path] | None:
     """Get or build the dependency graph, caching it."""
-    global _graph, _repo_root  # noqa: PLW0603
-    if _graph is not None and _repo_root is not None:
+    global _graph, _repo_root, _graph_stale  # noqa: PLW0603
+
+    if _graph is not None and _repo_root is not None and not _graph_stale:
         return _graph, _repo_root
 
     try:
-        _repo_root = git.find_repo_root()
+        repo_root = _repo_root or git.find_repo_root()
     except git.GitError:
         return None
 
-    _graph = discover.DependencyGraph(_repo_root)
-    _graph.build()
+    try:
+        new_graph = discover.DependencyGraph(repo_root)
+        new_graph.build()
+        _graph = new_graph
+        _repo_root = repo_root
+        _graph_stale = False
+    except Exception:
+        log.exception("graph_rebuild_failed")
+        if _graph is not None and _repo_root is not None:
+            log.info("using_cached_graph")
+            _graph_stale = False
+            return _graph, _repo_root
+        return None
+
     return _graph, _repo_root
 
 
 def _invalidate_graph() -> None:
-    """Force rebuild on next access (when kustomization.yaml changes)."""
-    global _graph  # noqa: PLW0603
-    _graph = None
+    """Mark graph stale so next access rebuilds it.
+
+    The old graph is kept as a fallback until the new one builds
+    successfully, so a transient parse error in a kustomization.yaml
+    doesn't wipe out the cached dependency data.
+    """
+    global _graph_stale  # noqa: PLW0603
+    _graph_stale = True
 
 
 def _uri_to_path(uri: str) -> Path:
