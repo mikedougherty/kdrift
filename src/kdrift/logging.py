@@ -76,4 +76,7 @@ def configure_logging(
         )
         root_logger.addHandler(file_handler)
 
+        pygls_logger = logging.getLogger("pygls")
+        pygls_logger.addHandler(file_handler)
+
     root_logger.setLevel(log_level.upper())

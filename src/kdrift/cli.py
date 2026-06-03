@@ -120,7 +120,8 @@ def mcp(ctx: click.Context) -> None:
 @click.pass_context
 def lsp(ctx: click.Context) -> None:
     """Start the LSP server for IDE integration."""
-    kdrift_logging.configure_logging(log_level=ctx.obj["log_level"], stream="stderr", log_file=True)
+    log_level = ctx.obj["log_level"] if ctx.obj["log_level"] != "WARNING" else "DEBUG"
+    kdrift_logging.configure_logging(log_level=log_level, stream="stderr", log_file=True)
     from kdrift import lsp_server
 
     lsp_server.run_lsp_server()
