@@ -12,6 +12,9 @@ Configure in VS Code settings.json, Neovim lspconfig, or any LSP client.
 from __future__ import annotations
 
 import functools
+import importlib
+import signal
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -324,6 +327,38 @@ def hover(params: lsp.HoverParams) -> lsp.Hover | None:
     )
 
 
+_ENGINE_MODULES = (
+    "kdrift.models",
+    "kdrift.config",
+    "kdrift.git",
+    "kdrift.discover",
+    "kdrift.render",
+    "kdrift.diff",
+    "kdrift.pipeline",
+)
+
+
+def _reload_engine(signum: int, frame: object) -> None:
+    """Reload all kdrift engine modules in-place (SIGUSR1 handler)."""
+    global _graph_stale  # noqa: PLW0603
+    reloaded = []
+    for mod_name in _ENGINE_MODULES:
+        if mod_name in sys.modules:
+            importlib.reload(sys.modules[mod_name])
+            reloaded.append(mod_name)
+
+    _graph_stale = True
+    log.info("engine_reloaded", modules=reloaded)
+    server.window_show_message(
+        lsp.ShowMessageParams(
+            type=lsp.MessageType.Info,
+            message=f"kdrift engine reloaded ({len(reloaded)} modules)",
+        )
+    )
+
+
 def run_lsp_server() -> None:
     """Start the LSP server on stdio."""
+    signal.signal(signal.SIGUSR1, _reload_engine)
+    log.info("sigusr1_handler_registered")
     server.start_io()
