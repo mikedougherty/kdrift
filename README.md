@@ -11,14 +11,15 @@ uv tool install kdrift    # or: uvx kdrift
 ## Usage
 
 ```bash
-kdrift                              # diff all affected overlays vs HEAD
-kdrift k8s/base/deployment.yaml     # diff overlays affected by this file
-kdrift --overlay k8s/dev            # diff only this overlay
-kdrift --ref main~3                 # diff against a specific ref
-kdrift -C /path/to/repo             # target a different repository
-kdrift --format json                # structured JSON output
-kdrift --check                      # exit non-zero if drift exists (CI/pre-commit)
-kdrift --watch                      # continuous mode: re-diff on file save
+kdrift diff                             # diff all affected overlays vs HEAD
+kdrift diff k8s/base/deployment.yaml    # diff overlays affected by this file
+kdrift diff --overlay k8s/dev           # diff only this overlay
+kdrift diff --ref main~3                # diff against a specific ref
+kdrift diff --ref main~5..main~2        # compare two commits
+kdrift diff -C /path/to/repo            # target a different repository
+kdrift diff --format json               # structured JSON output
+kdrift diff --check                     # exit non-zero if drift exists (CI/pre-commit)
+kdrift diff --watch                     # continuous mode: re-diff on file save
 ```
 
 ## How It Works
@@ -51,8 +52,48 @@ make typecheck   # mypy strict mode
 
 See [docs/development.md](docs/development.md) for detailed setup.
 
+## Agent Integration
+
+kdrift ships with agent-readable instructions in `docs/agents/`. These work with any AI coding assistant that supports `AGENTS.md` or similar instruction files.
+
+### MCP Server (recommended for agents)
+
+Configure kdrift as an MCP server for structured tool access:
+
+```json
+{
+  "mcpServers": {
+    "kdrift": {
+      "command": "kdrift",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Tools: `kdrift_diff`, `kdrift_discover`, `kdrift_affected`, `kdrift_render`.
+
+### Agent Instructions
+
+To give your agent knowledge of kdrift, reference the instructions from your agent config:
+
+```markdown
+@path/to/kdrift/docs/agents/AGENTS.md
+```
+
+Or copy `docs/agents/` into your project's agent instructions directory. The files are self-contained and agent-agnostic.
+
+### LSP Server (IDE integration)
+
+```bash
+kdrift lsp          # stdio transport, configure in your LSP client
+kdrift lsp --debug  # enable file logging to ~/.cache/kdrift/kdrift.log
+```
+
+Provides diagnostics on save, CodeLens annotations, and hover info.
+
 ## Documentation
 
 - [Development Guide](docs/development.md)
 - [Configuration](docs/configuration.md)
-- [Agent SKILL](docs/SKILL.md)
+- [Agent Instructions](docs/agents/AGENTS.md)
