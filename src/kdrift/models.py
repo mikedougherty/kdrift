@@ -98,6 +98,7 @@ class DiffResult(pydantic.BaseModel):
     """Top-level result of a kdrift diff operation."""
 
     ref: str
+    target_ref: str | None = None
     overlays: list[OverlayResult] = pydantic.Field(default_factory=list)
     errors: list[str] = pydantic.Field(default_factory=list)
 

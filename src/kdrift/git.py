@@ -83,6 +83,32 @@ def changed_files(
     return sorted(Path(f) for f in all_files)
 
 
+def changed_files_between(
+    ref_a: str,
+    ref_b: str,
+    paths: list[Path] | None = None,
+    repo_root: Path | None = None,
+) -> list[Path]:
+    """Get files changed between two refs.
+
+    Args:
+        ref_a: Base git ref.
+        ref_b: Target git ref.
+        paths: Scope the diff to these paths only.
+        repo_root: Repository root directory.
+
+    Returns:
+        List of changed file paths relative to the repo root.
+    """
+    path_args = ["--", *(str(p) for p in paths)] if paths else []
+    result = _run_git(
+        ["diff", "--name-only", ref_a, ref_b, *path_args],
+        cwd=repo_root,
+    )
+
+    return sorted(Path(line) for line in result.strip().splitlines() if line)
+
+
 def has_commits(repo_root: Path | None = None) -> bool:
     """Check if the repo has any commits."""
     try:
