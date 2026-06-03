@@ -22,7 +22,7 @@ import lsprotocol.types as lsp
 import structlog
 from pygls.lsp.server import LanguageServer
 
-from kdrift import config, discover, git, pipeline
+from kdrift import config, discover, git, models, pipeline
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
@@ -373,13 +373,115 @@ def _reload_engine(signum: int, frame: object) -> None:
         )
     )
 
-    if _last_saved_uri is not None:
-        log.info("replay_last_save", uri=_last_saved_uri)
-        did_save(
-            lsp.DidSaveTextDocumentParams(
-                text_document=lsp.TextDocumentIdentifier(uri=_last_saved_uri),
+    _run_full_diff_diagnostics()
+
+
+def _run_full_diff_diagnostics() -> None:
+    """Run the diff pipeline against all changed files and publish diagnostics."""
+    result = _get_graph()
+    if result is None:
+        log.warning("reload_diff_skipped", reason="no graph")
+        return
+    graph, repo_root = result
+
+    try:
+        changed = git.changed_files("HEAD", repo_root=repo_root)
+    except git.GitError:
+        log.exception("reload_diff_git_error")
+        return
+
+    if not changed:
+        log.info("reload_diff_no_changes")
+        server.window_show_message(
+            lsp.ShowMessageParams(
+                type=lsp.MessageType.Info,
+                message="kdrift: no uncommitted changes",
             )
         )
+        return
+
+    affected = graph.affected_overlays(changed)
+    log.info("reload_diff", changed_files=len(changed), affected_overlays=len(affected))
+
+    if not affected:
+        server.window_show_message(
+            lsp.ShowMessageParams(
+                type=lsp.MessageType.Info,
+                message=f"kdrift: {len(changed)} changed file(s), no overlays affected",
+            )
+        )
+        return
+
+    try:
+        proj_config = config.load_project_config(repo_root)
+        diff_result = pipeline.run_diff(
+            repo_root=repo_root,
+            kustomize_args=proj_config.kustomize_args,
+        )
+    except Exception:
+        log.exception("reload_diff_pipeline_error")
+        return
+
+    total_changes = sum(len(o.changes) for o in diff_result.overlays)
+    error_count = sum(1 for o in diff_result.overlays if o.has_error)
+    msg_parts = [f"{len(affected)} overlay(s)"]
+    if total_changes > 0:
+        msg_parts.append(f"{total_changes} resource change(s)")
+    if error_count > 0:
+        msg_parts.append(f"{error_count} build error(s)")
+    if total_changes == 0 and error_count == 0:
+        msg_parts.append("no drift")
+
+    server.window_show_message(
+        lsp.ShowMessageParams(
+            type=lsp.MessageType.Info if error_count == 0 else lsp.MessageType.Warning,
+            message=f"kdrift: {', '.join(msg_parts)}",
+        )
+    )
+
+    _publish_overlay_diagnostics(diff_result, repo_root)
+
+    log.info(
+        "reload_diff_complete",
+        overlays=len(affected),
+        changes=total_changes,
+        errors=error_count,
+    )
+
+
+def _publish_overlay_diagnostics(diff_result: models.DiffResult, repo_root: Path) -> None:
+    """Publish per-overlay diagnostics to VS Code."""
+    for overlay_result in diff_result.overlays:
+        kust_uri = (repo_root / overlay_result.path / "kustomization.yaml").as_uri()
+        diagnostics: list[lsp.Diagnostic] = []
+
+        if overlay_result.has_error:
+            diagnostics.append(
+                lsp.Diagnostic(
+                    range=lsp.Range(
+                        start=lsp.Position(line=0, character=0),
+                        end=lsp.Position(line=0, character=0),
+                    ),
+                    severity=lsp.DiagnosticSeverity.Error,
+                    source="kdrift",
+                    message=f"kustomize build failed: {overlay_result.error}",
+                )
+            )
+        elif overlay_result.has_changes:
+            names = [f"{c.resource_id.kind}/{c.resource_id.name}" for c in overlay_result.changes]
+            diagnostics.append(
+                lsp.Diagnostic(
+                    range=lsp.Range(
+                        start=lsp.Position(line=0, character=0),
+                        end=lsp.Position(line=0, character=0),
+                    ),
+                    severity=lsp.DiagnosticSeverity.Information,
+                    source="kdrift",
+                    message=f"{len(overlay_result.changes)} resource(s) changed: {', '.join(names)}",
+                )
+            )
+
+        server.text_document_publish_diagnostics(lsp.PublishDiagnosticsParams(uri=kust_uri, diagnostics=diagnostics))
 
 
 def run_lsp_server() -> None:
