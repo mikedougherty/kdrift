@@ -4,6 +4,7 @@ Provides:
 - Diagnostics on save: "this edit changed N resources across M overlays"
 - CodeLens: annotations showing which overlays reference each kustomization.yaml
 - Hover: show affected overlay count for files in kustomize directories
+- Workspace file watching: invalidates graph on file create/delete/rename
 
 Run via: kdrift lsp
 Configure in VS Code settings.json, Neovim lspconfig, or any LSP client.
@@ -11,6 +12,8 @@ Configure in VS Code settings.json, Neovim lspconfig, or any LSP client.
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import functools
 import importlib
 import signal
@@ -25,6 +28,22 @@ from pygls.lsp.server import LanguageServer
 from kdrift import config, discover, git, models, pipeline
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
+
+_DEBOUNCE_SECONDS = 0.3
+_MAX_CODELENS_OVERLAYS = 5
+
+_WATCHED_PATTERNS = ["**/*.yaml", "**/*.yml", "**/*.json"]
+
+
+@dataclasses.dataclass
+class KdriftState:
+    """Mutable state for the LSP server."""
+
+    graph: discover.DependencyGraph | None = None
+    repo_root: Path | None = None
+    graph_stale: bool = True
+    last_saved_uri: str | None = None
+    pending_rebuild: asyncio.Task[None] | None = None
 
 
 def _safe_handler[T](fn: Callable[..., T]) -> Callable[..., T | None]:
@@ -44,7 +63,18 @@ def _safe_handler[T](fn: Callable[..., T]) -> Callable[..., T | None]:
 
 
 class KdriftLanguageServer(LanguageServer):
-    """LanguageServer subclass that logs errors instead of crashing."""
+    """LanguageServer subclass with kdrift state and error suppression."""
+
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        text_document_sync_kind: lsp.TextDocumentSyncKind = lsp.TextDocumentSyncKind.Incremental,
+        notebook_document_sync: lsp.NotebookDocumentSyncOptions | None = None,
+    ) -> None:
+        """Initialize with kdrift state."""
+        super().__init__(name, version, text_document_sync_kind, notebook_document_sync)
+        self.state = KdriftState()
 
     def report_server_error(self, error: Exception, source: object) -> None:
         """Log all server errors to file instead of showing popups."""
@@ -57,41 +87,34 @@ server = KdriftLanguageServer(
     text_document_sync_kind=lsp.TextDocumentSyncKind.Full,
 )
 
-_graph: discover.DependencyGraph | None = None
-_repo_root: Path | None = None
-_graph_stale: bool = True
-_last_saved_uri: str | None = None
-
-_MAX_CODELENS_OVERLAYS = 5
-
 
 def _get_graph() -> tuple[discover.DependencyGraph, Path] | None:
-    """Get or build the dependency graph, caching it."""
-    global _graph, _repo_root, _graph_stale  # noqa: PLW0603
+    """Get or build the dependency graph, caching it on server.state."""
+    state = server.state
 
-    if _graph is not None and _repo_root is not None and not _graph_stale:
-        return _graph, _repo_root
+    if state.graph is not None and state.repo_root is not None and not state.graph_stale:
+        return state.graph, state.repo_root
 
     try:
-        repo_root = _repo_root or git.find_repo_root()
+        repo_root = state.repo_root or git.find_repo_root()
     except git.GitError:
         return None
 
     try:
         new_graph = discover.DependencyGraph(repo_root)
         new_graph.build()
-        _graph = new_graph
-        _repo_root = repo_root
-        _graph_stale = False
+        state.graph = new_graph
+        state.repo_root = repo_root
+        state.graph_stale = False
     except Exception:
         log.exception("graph_rebuild_failed")
-        if _graph is not None and _repo_root is not None:
+        if state.graph is not None and state.repo_root is not None:
             log.info("using_cached_graph")
-            _graph_stale = False
-            return _graph, _repo_root
+            state.graph_stale = False
+            return state.graph, state.repo_root
         return None
 
-    return _graph, _repo_root
+    return state.graph, state.repo_root
 
 
 def _invalidate_graph() -> None:
@@ -101,8 +124,7 @@ def _invalidate_graph() -> None:
     successfully, so a transient parse error in a kustomization.yaml
     doesn't wipe out the cached dependency data.
     """
-    global _graph_stale  # noqa: PLW0603
-    _graph_stale = True
+    server.state.graph_stale = True
 
 
 def _uri_to_path(uri: str) -> Path:
@@ -115,8 +137,9 @@ def _uri_to_path(uri: str) -> Path:
 @server.feature(lsp.INITIALIZED)
 @_safe_handler
 def on_initialized(params: lsp.InitializedParams) -> None:
-    """Notify the user when the server is ready."""
-    global _last_saved_uri  # noqa: PLW0603
+    """Build graph, prime replay URI, and register file watchers."""
+    state = server.state
+
     result = _get_graph()
     if result is None:
         log.warning("lsp_init_no_graph")
@@ -125,12 +148,14 @@ def on_initialized(params: lsp.InitializedParams) -> None:
     graph, repo_root = result
     overlay_count = len(graph.leaf_overlays)
 
-    if _last_saved_uri is None:
+    if state.last_saved_uri is None:
         leaves = graph.leaf_overlays
         if leaves:
             first_leaf = leaves[0]
-            _last_saved_uri = (repo_root / first_leaf.kustomization_file).as_uri()
-            log.info("default_replay_uri", uri=_last_saved_uri)
+            state.last_saved_uri = (repo_root / first_leaf.kustomization_file).as_uri()
+            log.info("default_replay_uri", uri=state.last_saved_uri)
+
+    _register_file_watchers()
 
     server.window_show_message(
         lsp.ShowMessageParams(
@@ -141,17 +166,88 @@ def on_initialized(params: lsp.InitializedParams) -> None:
     log.info("lsp_ready", overlays=overlay_count)
 
 
+def _register_file_watchers() -> None:
+    """Register workspace file watchers for kustomize-relevant files."""
+    caps = server.client_capabilities
+    if caps is None:
+        return
+
+    workspace = caps.workspace
+    if workspace is None:
+        return
+
+    dcwf = workspace.did_change_watched_files
+    if dcwf is None or not dcwf.dynamic_registration:
+        log.info("file_watchers_not_supported")
+        return
+
+    watchers = [
+        lsp.FileSystemWatcher(
+            glob_pattern=pattern,
+            kind=lsp.WatchKind.Create | lsp.WatchKind.Delete,
+        )
+        for pattern in _WATCHED_PATTERNS
+    ]
+
+    registration = lsp.Registration(
+        id="kdrift-file-watchers",
+        method=lsp.WORKSPACE_DID_CHANGE_WATCHED_FILES,
+        register_options=lsp.DidChangeWatchedFilesRegistrationOptions(watchers=watchers),
+    )
+
+    server.client_register_capability(lsp.RegistrationParams(registrations=[registration]))
+    log.info("file_watchers_registered", patterns=_WATCHED_PATTERNS)
+
+
+@server.feature(lsp.WORKSPACE_DID_CHANGE_WATCHED_FILES)
+@_safe_handler
+def did_change_watched_files(params: lsp.DidChangeWatchedFilesParams) -> None:
+    """Invalidate graph when files are created or deleted."""
+    for change in params.changes:
+        if change.type in (lsp.FileChangeType.Created, lsp.FileChangeType.Deleted):
+            log.debug("file_watch_event", uri=change.uri, type=change.type.name)
+            _invalidate_graph()
+            return
+
+
 @server.feature(lsp.TEXT_DOCUMENT_DID_SAVE)
 @_safe_handler
 def did_save(params: lsp.DidSaveTextDocumentParams) -> None:
-    """Run drift detection on save and publish diagnostics."""
-    global _last_saved_uri  # noqa: PLW0603
-    _last_saved_uri = params.text_document.uri
+    """Run drift detection on save with debouncing."""
+    state = server.state
+    state.last_saved_uri = params.text_document.uri
     file_path = _uri_to_path(params.text_document.uri)
 
     if file_path.name in discover.KUSTOMIZATION_FILENAMES:
         _invalidate_graph()
 
+    _schedule_rebuild(params.text_document.uri, file_path)
+
+
+def _schedule_rebuild(uri: str, file_path: Path) -> None:
+    """Schedule a debounced rebuild, cancelling any pending one."""
+    state = server.state
+
+    if state.pending_rebuild is not None and not state.pending_rebuild.done():
+        state.pending_rebuild.cancel()
+        log.debug("rebuild_debounced", uri=uri)
+
+    loop = asyncio.get_event_loop()
+    state.pending_rebuild = loop.create_task(_debounced_rebuild(uri, file_path))
+
+
+async def _debounced_rebuild(uri: str, file_path: Path) -> None:
+    """Wait for debounce period, then run diagnostics."""
+    try:
+        await asyncio.sleep(_DEBOUNCE_SECONDS)
+    except asyncio.CancelledError:
+        return
+
+    _run_save_diagnostics(uri, file_path)
+
+
+def _run_save_diagnostics(uri: str, file_path: Path) -> None:
+    """Run diagnostics for a saved file."""
     result = _get_graph()
     if result is None:
         return
@@ -164,12 +260,7 @@ def did_save(params: lsp.DidSaveTextDocumentParams) -> None:
 
     affected = graph.affected_overlays([rel_path])
     if not affected:
-        server.text_document_publish_diagnostics(
-            lsp.PublishDiagnosticsParams(
-                uri=params.text_document.uri,
-                diagnostics=[],
-            )
-        )
+        server.text_document_publish_diagnostics(lsp.PublishDiagnosticsParams(uri=uri, diagnostics=[]))
         return
 
     diagnostics: list[lsp.Diagnostic] = []
@@ -245,12 +336,7 @@ def did_save(params: lsp.DidSaveTextDocumentParams) -> None:
             )
         )
 
-    server.text_document_publish_diagnostics(
-        lsp.PublishDiagnosticsParams(
-            uri=params.text_document.uri,
-            diagnostics=diagnostics,
-        )
-    )
+    server.text_document_publish_diagnostics(lsp.PublishDiagnosticsParams(uri=uri, diagnostics=diagnostics))
 
 
 @server.feature(lsp.TEXT_DOCUMENT_CODE_LENS)
@@ -357,14 +443,13 @@ _ENGINE_MODULES = (
 
 def _reload_engine(signum: int, frame: object) -> None:
     """Reload all kdrift engine modules in-place (SIGUSR1 handler)."""
-    global _graph_stale  # noqa: PLW0603
     reloaded = []
     for mod_name in _ENGINE_MODULES:
         if mod_name in sys.modules:
             importlib.reload(sys.modules[mod_name])
             reloaded.append(mod_name)
 
-    _graph_stale = True
+    server.state.graph_stale = True
     log.info("engine_reloaded", modules=reloaded)
     server.window_show_message(
         lsp.ShowMessageParams(
