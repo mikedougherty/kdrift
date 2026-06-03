@@ -107,16 +107,20 @@ def diff(
 
 
 @main.command()
-def mcp() -> None:
+@click.pass_context
+def mcp(ctx: click.Context) -> None:
     """Start the MCP server for AI agent integration."""
+    kdrift_logging.configure_logging(log_level=ctx.obj["log_level"], stream="stderr", log_file=True)
     from kdrift import mcp_server
 
     mcp_server.run_mcp_server()
 
 
 @main.command()
-def lsp() -> None:
+@click.pass_context
+def lsp(ctx: click.Context) -> None:
     """Start the LSP server for IDE integration."""
+    kdrift_logging.configure_logging(log_level=ctx.obj["log_level"], stream="stderr", log_file=True)
     from kdrift import lsp_server
 
     lsp_server.run_lsp_server()

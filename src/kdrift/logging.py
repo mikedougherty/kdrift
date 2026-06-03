@@ -2,16 +2,26 @@
 
 import logging
 import sys
+from pathlib import Path
 
 import structlog
 
+LOG_FILE = Path.home() / ".cache" / "kdrift" / "kdrift.log"
 
-def configure_logging(log_level: str = "INFO", log_format: str = "json") -> None:
+
+def configure_logging(
+    log_level: str = "INFO",
+    log_format: str = "json",
+    stream: str = "stdout",
+    log_file: bool = False,
+) -> None:
     """Configure structlog with JSON output in production, pretty console in development.
 
     Args:
         log_level: Python log level name (DEBUG, INFO, WARNING, ERROR, CRITICAL).
         log_format: "json" for production, "console" for local development.
+        stream: "stdout" or "stderr". Use "stderr" for LSP/MCP modes where stdout is the protocol channel.
+        log_file: Also write JSON logs to ~/.cache/kdrift/kdrift.log.
     """
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -38,7 +48,8 @@ def configure_logging(log_level: str = "INFO", log_format: str = "json") -> None
         cache_logger_on_first_use=True,
     )
 
-    handler = logging.StreamHandler(sys.stdout)
+    output = sys.stderr if stream == "stderr" else sys.stdout
+    handler = logging.StreamHandler(output)
     handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
             processors=[
@@ -51,4 +62,18 @@ def configure_logging(log_level: str = "INFO", log_format: str = "json") -> None
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
+
+    if log_file:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(LOG_FILE)
+        file_handler.setFormatter(
+            structlog.stdlib.ProcessorFormatter(
+                processors=[
+                    structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                    structlog.processors.JSONRenderer(),
+                ],
+            )
+        )
+        root_logger.addHandler(file_handler)
+
     root_logger.setLevel(log_level.upper())
