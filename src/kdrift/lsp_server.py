@@ -108,6 +108,21 @@ def _uri_to_path(uri: str) -> Path:
     return Path(uri)
 
 
+@server.feature(lsp.INITIALIZED)
+@_safe_handler
+def on_initialized(params: lsp.InitializedParams) -> None:
+    """Notify the user when the server is ready."""
+    result = _get_graph()
+    overlay_count = len(result[0].leaf_overlays) if result else 0
+    server.window_show_message(
+        lsp.ShowMessageParams(
+            type=lsp.MessageType.Info,
+            message=f"kdrift LSP ready ({overlay_count} leaf overlays)",
+        )
+    )
+    log.info("lsp_ready", overlays=overlay_count)
+
+
 @server.feature(lsp.TEXT_DOCUMENT_DID_SAVE)
 @_safe_handler
 def did_save(params: lsp.DidSaveTextDocumentParams) -> None:
