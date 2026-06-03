@@ -19,6 +19,7 @@ test-results/
 .coverage
 
 .scannerwork/
+.claude/
 
 *.db
 *.sqlite3

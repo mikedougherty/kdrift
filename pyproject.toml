@@ -64,7 +64,7 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D", "PLR2004", "PLR0913"]
+"tests/**/*.py" = ["D", "PLR2004", "PLR0913", "PLR0912", "PLR0915", "C901", "SIM117"]
 "src/**/config.py" = ["TC002"]    # pydantic types used at runtime for validation
 "src/**/cli.py" = ["PLR0913", "PLC0415"]  # click: many params, lazy imports for subcommands
 

@@ -107,21 +107,24 @@ def diff(
 
 
 @main.command()
+@click.option("--debug", is_flag=True, help="Enable debug logging and file log (~/.cache/kdrift/kdrift.log).")
 @click.pass_context
-def mcp(ctx: click.Context) -> None:
+def mcp(ctx: click.Context, debug: bool) -> None:
     """Start the MCP server for AI agent integration."""
-    kdrift_logging.configure_logging(log_level=ctx.obj["log_level"], stream="stderr", log_file=True)
+    log_level = "DEBUG" if debug else ctx.obj["log_level"]
+    kdrift_logging.configure_logging(log_level=log_level, stream="stderr", log_file=debug)
     from kdrift import mcp_server
 
     mcp_server.run_mcp_server()
 
 
 @main.command()
+@click.option("--debug", is_flag=True, help="Enable debug logging and file log (~/.cache/kdrift/kdrift.log).")
 @click.pass_context
-def lsp(ctx: click.Context) -> None:
+def lsp(ctx: click.Context, debug: bool) -> None:
     """Start the LSP server for IDE integration."""
-    log_level = ctx.obj["log_level"] if ctx.obj["log_level"] != "WARNING" else "DEBUG"
-    kdrift_logging.configure_logging(log_level=log_level, stream="stderr", log_file=True)
+    log_level = "DEBUG" if debug else ctx.obj["log_level"]
+    kdrift_logging.configure_logging(log_level=log_level, stream="stderr", log_file=debug)
     from kdrift import lsp_server
 
     lsp_server.run_lsp_server()
