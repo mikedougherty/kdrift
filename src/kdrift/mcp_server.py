@@ -60,23 +60,44 @@ def kdrift_diff(
 @server.tool(
     name="kdrift_discover",
     description=(
-        "Discover all leaf kustomize overlays in a repository. Leaf overlays are "
-        "deployment targets (not referenced by other overlays as bases/components)."
+        "Discover leaf kustomize overlays in a repository. By default, returns only "
+        "overlays affected by current uncommitted changes (via git status). Pass "
+        "show_all=true to list every leaf overlay in the repo."
     ),
 )
-def kdrift_discover(repo_path: str) -> str:
-    """List all leaf overlays in the repository."""
+def kdrift_discover(repo_path: str, show_all: bool = False) -> str:
+    """List leaf overlays, scoped to current git changes by default."""
     repo_root = git.find_repo_root(Path(repo_path))
 
     graph = discover.DependencyGraph(repo_root)
     graph.build()
 
-    leaves = graph.leaf_overlays
+    if show_all:
+        overlays = graph.leaf_overlays
+        scope = "all"
+    else:
+        try:
+            changed = git.changed_files("HEAD", repo_root=repo_root)
+        except git.GitError:
+            changed = []
+
+        if not changed:
+            return json.dumps(
+                {"repo": str(repo_root), "leaf_overlays": [], "total": 0, "scope": "changed", "changed_files": 0},
+                indent=2,
+            )
+
+        overlays = graph.affected_overlays(changed)
+        scope = "changed"
+
     output = {
         "repo": str(repo_root),
-        "leaf_overlays": [{"path": str(o.path), "kustomization_file": str(o.kustomization_file)} for o in leaves],
-        "total": len(leaves),
+        "leaf_overlays": [{"path": str(o.path), "kustomization_file": str(o.kustomization_file)} for o in overlays],
+        "total": len(overlays),
+        "scope": scope,
     }
+    if scope == "changed":
+        output["changed_files"] = len(changed)
 
     return json.dumps(output, indent=2)
 
