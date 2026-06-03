@@ -116,8 +116,22 @@ def _uri_to_path(uri: str) -> Path:
 @_safe_handler
 def on_initialized(params: lsp.InitializedParams) -> None:
     """Notify the user when the server is ready."""
+    global _last_saved_uri  # noqa: PLW0603
     result = _get_graph()
-    overlay_count = len(result[0].leaf_overlays) if result else 0
+    if result is None:
+        log.warning("lsp_init_no_graph")
+        return
+
+    graph, repo_root = result
+    overlay_count = len(graph.leaf_overlays)
+
+    if _last_saved_uri is None:
+        leaves = graph.leaf_overlays
+        if leaves:
+            first_leaf = leaves[0]
+            _last_saved_uri = (repo_root / first_leaf.kustomization_file).as_uri()
+            log.info("default_replay_uri", uri=_last_saved_uri)
+
     server.window_show_message(
         lsp.ShowMessageParams(
             type=lsp.MessageType.Info,
