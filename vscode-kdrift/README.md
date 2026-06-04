@@ -8,13 +8,9 @@ Modeled after VS Code's built-in Markdown Preview: edit a kustomization file on 
 
 ## Features
 
-**Live drift preview** — Save a file, see which Kubernetes resources changed across every affected overlay. Color-coded unified diffs with MODIFIED/ADDED/REMOVED badges.
+**Live drift preview with blast radius detection** — Save a file, see which Kubernetes resources changed across every affected overlay. Edit a base file and instantly see the impact across dev, staging, and prod. Color-coded unified diffs with MODIFIED/ADDED/REMOVED badges.
 
-<!-- TODO: ![Multi-overlay blast radius](media/screenshots/multi-overlay.png) -->
-
-**Blast radius detection** — Edit a base file and instantly see the impact across dev, staging, and prod overlays. No more guessing which environments are affected.
-
-**Generator-aware matching** — ConfigMap and Secret names with kustomize hash suffixes are matched intelligently. Renaming a generator shows as ADDED + REMOVED, not a wall of unrelated diffs.
+**Generator-aware matching** — Files referenced by `configMapGenerator` and `secretGenerator` are tracked through the dependency graph. Edits to generator-referenced files show the rendered ConfigMap/Secret diff across all affected overlays.
 
 ![Editing a generator-referenced file shows the ConfigMap diff across all overlays](media/screenshots/generator-matching.jpg)
 
