@@ -83,6 +83,10 @@ To give your agent knowledge of kdrift, reference the instructions from your age
 
 Or copy `docs/agents/` into your project's agent instructions directory. The files are self-contained and agent-agnostic.
 
+### VS Code Extension
+
+The `vscode-kdrift/` directory contains a VS Code extension that shows drift diffs in a side panel, modeled after the built-in Markdown Preview. See [vscode-kdrift/README.md](vscode-kdrift/README.md) for setup and development.
+
 ### LSP Server (IDE integration)
 
 ```bash
