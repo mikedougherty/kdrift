@@ -5,8 +5,14 @@ Kustomize manifest drift detection. Discovers which overlays are affected by you
 ## Install
 
 ```bash
-uv tool install kdrift    # or: uvx kdrift
+# From GitHub (recommended for now)
+uv tool install git+https://github.com/mikedougherty/kdrift
+
+# From PyPI (once published)
+uv tool install kdrift
 ```
+
+Requires Python 3.13+ and `kustomize` on PATH.
 
 ## Usage
 
@@ -52,13 +58,17 @@ make typecheck   # mypy strict mode
 
 See [docs/development.md](docs/development.md) for detailed setup.
 
-## Agent Integration
+## Quick Start: MCP Server for Claude Code
 
-kdrift ships with agent-readable instructions in `docs/agents/`. These work with any AI coding assistant that supports `AGENTS.md` or similar instruction files.
+Give your AI agent kustomize drift detection in two steps:
 
-### MCP Server (recommended for agents)
+**1. Install kdrift:**
 
-Configure kdrift as an MCP server for structured tool access:
+```bash
+uv tool install git+https://github.com/mikedougherty/kdrift
+```
+
+**2. Add to your Claude Code MCP config** (`.claude.json` or project `.mcp.json`):
 
 ```json
 {
@@ -71,17 +81,19 @@ Configure kdrift as an MCP server for structured tool access:
 }
 ```
 
-Tools: `kdrift_diff`, `kdrift_discover`, `kdrift_affected`, `kdrift_render`.
+That's it. Your agent now has four tools: `kdrift_diff`, `kdrift_discover`, `kdrift_affected`, `kdrift_render`. Ask it to "check what my kustomize changes affect" and it will use them.
 
-### Agent Instructions
-
-To give your agent knowledge of kdrift, reference the instructions from your agent config:
+**3. (Optional) Add agent instructions** for deeper context on how to use kdrift:
 
 ```markdown
 @path/to/kdrift/docs/agents/AGENTS.md
 ```
 
 Or copy `docs/agents/` into your project's agent instructions directory. The files are self-contained and agent-agnostic.
+
+## Agent Integration
+
+kdrift ships with agent-readable instructions in `docs/agents/`. These work with any AI coding assistant that supports `AGENTS.md` or similar instruction files.
 
 ### VS Code Extension
 
