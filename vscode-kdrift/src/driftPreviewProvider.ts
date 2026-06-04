@@ -169,7 +169,10 @@ export class DriftPreviewProvider {
       this.lastState = { result, filePath };
 
       const hasChanges = result.overlays.some((o) => o.changes.length > 0);
-      if (!hasChanges && result.errors.length === 0) {
+      const hasErrors =
+        result.errors.length > 0 ||
+        result.overlays.some((o) => o.error !== null);
+      if (!hasChanges && !hasErrors) {
         this.postMessage({ type: "noChanges", filePath });
       } else {
         this.postMessage({ type: "update", data: result, filePath });
