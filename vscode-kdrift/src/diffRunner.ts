@@ -35,9 +35,21 @@ export class DiffRunner {
       });
       return JSON.parse(stdout) as DiffResult;
     } catch (err: unknown) {
-      const execErr = err as { stderr?: string; code?: number; killed?: boolean };
+      const execErr = err as {
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+      };
       if (execErr.killed) {
         throw new Error("kdrift timed out (60s). The repo may have too many overlays.");
+      }
+      if (execErr.stdout) {
+        try {
+          return JSON.parse(execErr.stdout) as DiffResult;
+        } catch {
+          // stdout wasn't valid JSON, fall through to error
+        }
       }
       const stderr = execErr.stderr?.trim();
       throw new Error(stderr || `kdrift exited with code ${execErr.code ?? "unknown"}`);
