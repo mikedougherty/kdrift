@@ -48,6 +48,13 @@
           "when": "resourceFilename =~ /kustomization\\.(yaml|yml)$/",
           "group": "navigation"
         }
+      ],
+      "webview/title": [
+        {
+          "command": "kdrift.refreshPreview",
+          "when": "activeWebviewPanelId == 'kdrift.preview'",
+          "group": "navigation"
+        }
       ]
     },
     "configuration": {

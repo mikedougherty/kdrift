@@ -5,6 +5,38 @@ import type { DiffResult } from "./types";
 
 const execFileAsync = promisify(execFile);
 
+interface ExecResult {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  killed: boolean;
+}
+
+function runCommand(
+  binary: string,
+  args: string[],
+  timeout: number
+): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const proc = execFile(
+      binary,
+      args,
+      { timeout, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const killed = error?.killed ?? false;
+        const code =
+          error && "code" in error && typeof error.code === "number"
+            ? error.code
+            : error
+              ? 1
+              : 0;
+        resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code, killed });
+      }
+    );
+    proc.unref();
+  });
+}
+
 export class DiffRunner {
   private repoRootCache = new Map<string, string>();
 
@@ -28,32 +60,30 @@ export class DiffRunner {
       : filePath;
     args.push(relativePath);
 
-    try {
-      const { stdout } = await execFileAsync(binary, args, {
-        timeout: 60_000,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      return JSON.parse(stdout) as DiffResult;
-    } catch (err: unknown) {
-      const execErr = err as {
-        stdout?: string;
-        stderr?: string;
-        code?: number;
-        killed?: boolean;
-      };
-      if (execErr.killed) {
-        throw new Error("kdrift timed out (60s). The repo may have too many overlays.");
-      }
-      if (execErr.stdout) {
-        try {
-          return JSON.parse(execErr.stdout) as DiffResult;
-        } catch {
-          // stdout wasn't valid JSON, fall through to error
-        }
-      }
-      const stderr = execErr.stderr?.trim();
-      throw new Error(stderr || `kdrift exited with code ${execErr.code ?? "unknown"}`);
+    const result = await runCommand(binary, args, 60_000);
+
+    if (result.killed) {
+      throw new Error(
+        "kdrift timed out (60s). The repo may have too many overlays."
+      );
     }
+
+    if (result.stdout) {
+      try {
+        return JSON.parse(result.stdout) as DiffResult;
+      } catch {
+        // stdout wasn't valid JSON, fall through to error
+      }
+    }
+
+    if (result.code === 0) {
+      return { ref: "", target_ref: null, overlays: [], errors: [] };
+    }
+
+    const stderr = result.stderr.trim();
+    throw new Error(
+      stderr || `kdrift exited with code ${result.code}. Run 'kdrift diff' in the terminal for details.`
+    );
   }
 
   async checkBinary(): Promise<boolean> {

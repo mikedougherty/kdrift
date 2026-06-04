@@ -60,13 +60,18 @@ window.addEventListener("message", (event: MessageEvent<ToWebviewMessage>) => {
   }
 });
 
+document.addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  if (target.classList.contains("refresh-btn")) {
+    vscode.postMessage({ type: "refresh" });
+  }
+});
+
 vscode.postMessage({ type: "ready" });
 
 function renderLoading(filePath: string): string {
   return `
-    <div class="status-bar">
-      <span class="file-path">${escapeHtml(basename(filePath))}</span>
-    </div>
+    ${statusBar(filePath)}
     <div class="loading">
       <div class="spinner"></div>
       <p>Running kdrift diff...</p>
@@ -75,9 +80,7 @@ function renderLoading(filePath: string): string {
 
 function renderNoChanges(filePath: string): string {
   return `
-    <div class="status-bar">
-      <span class="file-path">${escapeHtml(basename(filePath))}</span>
-    </div>
+    ${statusBar(filePath)}
     <div class="empty-state">
       <p>No drift detected. Rendered manifests match the baseline.</p>
     </div>`;
@@ -85,9 +88,7 @@ function renderNoChanges(filePath: string): string {
 
 function renderError(message: string, filePath: string): string {
   return `
-    <div class="status-bar">
-      <span class="file-path">${escapeHtml(basename(filePath))}</span>
-    </div>
+    ${statusBar(filePath)}
     <div class="error-state">
       <span class="error-icon">&#x26A0;</span>
       <pre>${escapeHtml(message)}</pre>
@@ -108,12 +109,11 @@ function renderDiffResult(result: DiffResult, filePath: string): string {
     }
   }
 
+  const refBadges = `<span class="ref-badge">ref: ${escapeHtml(result.ref)}</span>
+      ${result.target_ref ? `<span class="ref-badge">target: ${escapeHtml(result.target_ref)}</span>` : ""}`;
+
   let html = `
-    <div class="status-bar">
-      <span class="file-path">${escapeHtml(basename(filePath))}</span>
-      <span class="ref-badge">ref: ${escapeHtml(result.ref)}</span>
-      ${result.target_ref ? `<span class="ref-badge">target: ${escapeHtml(result.target_ref)}</span>` : ""}
-    </div>
+    ${statusBar(filePath, refBadges)}
     <div class="summary">
       <span>${result.overlays.length} overlay${result.overlays.length !== 1 ? "s" : ""}</span>
       <span>${totalChanges} resource${totalChanges !== 1 ? "s" : ""} changed</span>
@@ -210,6 +210,14 @@ function renderChange(change: ResourceChange): string {
 
   html += `</details>`;
   return html;
+}
+
+function statusBar(filePath: string, extra = ""): string {
+  return `<div class="status-bar">
+      <span class="file-path">${escapeHtml(basename(filePath))}</span>
+      ${extra}
+      <button class="refresh-btn" title="Refresh">&#x21bb; Refresh</button>
+    </div>`;
 }
 
 function basename(filePath: string): string {
