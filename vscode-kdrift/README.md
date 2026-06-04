@@ -4,9 +4,7 @@ Kustomize manifest drift detection in your editor. Shows what your changes will 
 
 Modeled after VS Code's built-in Markdown Preview: edit a kustomization file on the left, see the rendered manifest diff on the right.
 
-<!-- TODO: Add screenshots
-![Hero: side-by-side editor and drift preview](media/screenshots/hero.png)
--->
+![Edit a base component on the left, see the impact across all overlays on the right](media/screenshots/hero.jpg)
 
 ## Features
 
