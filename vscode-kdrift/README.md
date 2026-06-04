@@ -20,7 +20,7 @@ Modeled after VS Code's built-in Markdown Preview: edit a kustomization file on 
 
 **Error reporting** — When `kustomize build` fails for an overlay, the error appears inline. Other overlays still render normally.
 
-<!-- TODO: ![Error state](media/screenshots/error-state.png) -->
+![Kustomize build errors appear inline per overlay](media/screenshots/error-state.jpg)
 
 **LSP integration** — Diagnostics in the Problems panel, CodeLens annotations on `kustomization.yaml` files, and hover info showing affected overlay counts. Powered by `kdrift lsp`.
 
