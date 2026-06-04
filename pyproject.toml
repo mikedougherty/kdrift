@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kdrift"
-version = "0.1.1"
+version = "0.1.2"
 description = "CLI, MCP, LSP, and VS Code extension for kustomize manifest drift detection"
 readme = "README.md"
 license = "Beerware"
