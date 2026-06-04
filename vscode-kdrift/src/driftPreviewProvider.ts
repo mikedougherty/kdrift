@@ -2,12 +2,16 @@ import * as vscode from "vscode";
 import { DiffRunner } from "./diffRunner";
 import type { DiffResult, ToWebviewMessage, FromWebviewMessage } from "./types";
 
+interface PreviewState {
+  result: DiffResult;
+  filePath: string;
+}
+
 export class DriftPreviewProvider {
   private panel: vscode.WebviewPanel | undefined;
   private locked = false;
   private trackedUri: string | undefined;
-  private lastResult: DiffResult | undefined;
-  private lastFilePath: string | undefined;
+  private lastState: PreviewState | undefined;
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private disposables: vscode.Disposable[] = [];
 
@@ -36,13 +40,18 @@ export class DriftPreviewProvider {
   }
 
   refresh(): void {
-    if (this.lastFilePath) {
-      this.updatePreview(this.lastFilePath);
+    if (this.lastState) {
+      this.updatePreview(this.lastState.filePath);
     }
   }
 
   onDocumentSaved(document: vscode.TextDocument): void {
     if (!this.panel) {
+      return;
+    }
+
+    const fsPath = document.uri.fsPath;
+    if (!fsPath.endsWith(".yaml") && !fsPath.endsWith(".yml") && !fsPath.endsWith(".json")) {
       return;
     }
 
@@ -98,8 +107,7 @@ export class DriftPreviewProvider {
     this.panel.onDidDispose(
       () => {
         this.panel = undefined;
-        this.lastResult = undefined;
-        this.lastFilePath = undefined;
+        this.lastState = undefined;
         if (this.debounceTimer) {
           clearTimeout(this.debounceTimer);
         }
@@ -110,11 +118,11 @@ export class DriftPreviewProvider {
 
     this.panel.onDidChangeViewState(
       (e) => {
-        if (e.webviewPanel.visible && this.lastResult && this.lastFilePath) {
+        if (e.webviewPanel.visible && this.lastState) {
           this.postMessage({
             type: "update",
-            data: this.lastResult,
-            filePath: this.lastFilePath,
+            data: this.lastState.result,
+            filePath: this.lastState.filePath,
           });
         }
       },
@@ -132,11 +140,11 @@ export class DriftPreviewProvider {
             vscode.window.showTextDocument(vscode.Uri.file(msg.path));
             break;
           case "ready":
-            if (this.lastResult && this.lastFilePath) {
+            if (this.lastState) {
               this.postMessage({
                 type: "update",
-                data: this.lastResult,
-                filePath: this.lastFilePath,
+                data: this.lastState.result,
+                filePath: this.lastState.filePath,
               });
             }
             break;
@@ -154,12 +162,11 @@ export class DriftPreviewProvider {
       return;
     }
 
-    this.lastFilePath = filePath;
     this.postMessage({ type: "loading", filePath });
 
     try {
       const result = await this.diffRunner.runDiff(filePath);
-      this.lastResult = result;
+      this.lastState = { result, filePath };
 
       const hasChanges = result.overlays.some((o) => o.changes.length > 0);
       if (!hasChanges && result.errors.length === 0) {

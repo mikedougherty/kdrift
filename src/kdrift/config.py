@@ -9,7 +9,7 @@ import pydantic
 import pydantic_settings
 import yaml
 
-_SafeLoader: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+from kdrift import safe_loader
 
 
 class AppConfig(pydantic_settings.BaseSettings):
@@ -98,7 +98,7 @@ def _load_yaml(path: Path) -> dict[str, object] | None:
     """Load a YAML file, returning None on error."""
     try:
         with path.open() as f:
-            data = yaml.load(f, Loader=_SafeLoader)
+            data = yaml.load(f, Loader=safe_loader)
         if isinstance(data, dict):
             return data
     except (yaml.YAMLError, OSError):

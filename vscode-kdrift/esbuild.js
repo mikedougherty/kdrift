@@ -1,62 +1,57 @@
 const esbuild = require("esbuild");
-const path = require("path");
 const fs = require("fs");
 
 const watch = process.argv.includes("--watch");
 const minify = process.argv.includes("--minify");
 
-async function build() {
-  const shared = { bundle: true, minify, sourcemap: !minify };
+const extensionConfig = {
+  entryPoints: ["src/extension.ts"],
+  outfile: "dist/extension.js",
+  bundle: true,
+  format: "cjs",
+  platform: "node",
+  external: ["vscode"],
+};
 
-  const extensionBuild = esbuild.build({
-    ...shared,
-    entryPoints: ["src/extension.ts"],
-    outfile: "dist/extension.js",
-    format: "cjs",
-    platform: "node",
-    external: ["vscode"],
-  });
+const webviewConfig = {
+  entryPoints: ["src/webview/preview.ts"],
+  outfile: "dist/webview/preview.js",
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+};
 
-  const webviewBuild = esbuild.build({
-    ...shared,
-    entryPoints: ["src/webview/preview.ts"],
-    outfile: "dist/webview/preview.js",
-    format: "iife",
-    platform: "browser",
-  });
-
+function copyStyles() {
   fs.mkdirSync("dist/webview", { recursive: true });
   fs.copyFileSync("src/webview/styles.css", "dist/webview/styles.css");
+}
 
-  await Promise.all([extensionBuild, webviewBuild]);
+async function build() {
+  const shared = { minify, sourcemap: !minify };
+  await Promise.all([
+    esbuild.build({ ...extensionConfig, ...shared }),
+    esbuild.build({ ...webviewConfig, ...shared }),
+  ]);
+  copyStyles();
   console.log("Build complete");
 }
 
+async function startWatch() {
+  const shared = { sourcemap: true };
+  const contexts = await Promise.all([
+    esbuild.context({ ...extensionConfig, ...shared }),
+    esbuild.context({ ...webviewConfig, ...shared }),
+  ]);
+  for (const ctx of contexts) {
+    await ctx.watch();
+  }
+  copyStyles();
+  fs.watchFile("src/webview/styles.css", () => copyStyles());
+  console.log("Watching for changes...");
+}
+
 if (watch) {
-  const ctx = Promise.all([
-    esbuild.context({
-      entryPoints: ["src/extension.ts"],
-      outfile: "dist/extension.js",
-      bundle: true,
-      format: "cjs",
-      platform: "node",
-      external: ["vscode"],
-      sourcemap: true,
-    }),
-    esbuild.context({
-      entryPoints: ["src/webview/preview.ts"],
-      outfile: "dist/webview/preview.js",
-      bundle: true,
-      format: "iife",
-      platform: "browser",
-      sourcemap: true,
-    }),
-  ]).then(async (contexts) => {
-    for (const ctx of contexts) {
-      await ctx.watch();
-    }
-    console.log("Watching for changes...");
-  });
+  startWatch();
 } else {
   build().catch(() => process.exit(1));
 }

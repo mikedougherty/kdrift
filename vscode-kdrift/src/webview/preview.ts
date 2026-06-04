@@ -95,19 +95,18 @@ function renderError(message: string, filePath: string): string {
 }
 
 function renderDiffResult(result: DiffResult, filePath: string): string {
-  const totalAdded = result.overlays.reduce(
-    (sum, o) => sum + o.changes.reduce((s, c) => s + c.lines_added, 0),
-    0
-  );
-  const totalRemoved = result.overlays.reduce(
-    (sum, o) => sum + o.changes.reduce((s, c) => s + c.lines_removed, 0),
-    0
-  );
-  const totalChanges = result.overlays.reduce(
-    (sum, o) => sum + o.changes.length,
-    0
-  );
-  const errorCount = result.overlays.filter((o) => o.error).length;
+  let totalAdded = 0;
+  let totalRemoved = 0;
+  let totalChanges = 0;
+  let errorCount = 0;
+  for (const o of result.overlays) {
+    totalChanges += o.changes.length;
+    if (o.error) errorCount++;
+    for (const c of o.changes) {
+      totalAdded += c.lines_added;
+      totalRemoved += c.lines_removed;
+    }
+  }
 
   let html = `
     <div class="status-bar">
