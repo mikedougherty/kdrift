@@ -16,7 +16,7 @@ Modeled after VS Code's built-in Markdown Preview: edit a kustomization file on 
 
 **Generator-aware matching** — ConfigMap and Secret names with kustomize hash suffixes are matched intelligently. Renaming a generator shows as ADDED + REMOVED, not a wall of unrelated diffs.
 
-<!-- TODO: ![Generator matching](media/screenshots/generator-matching.png) -->
+![Editing a generator-referenced file shows the ConfigMap diff across all overlays](media/screenshots/generator-matching.jpg)
 
 **Error reporting** — When `kustomize build` fails for an overlay, the error appears inline. Other overlays still render normally.
 
