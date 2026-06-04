@@ -46,7 +46,7 @@ def kdrift_diff(
     instead of ref vs working tree.
     """
     repo_root = git.find_repo_root(Path(repo_path))
-    proj_config = config.load_project_config(repo_root)
+    proj_config = config.resolve_project_config(config.load_project_config(repo_root))
 
     path_list = [Path(p) for p in paths] if paths else None
     overlay_filter = Path(overlay) if overlay else None
@@ -58,6 +58,7 @@ def kdrift_diff(
         overlay_filter=overlay_filter,
         kustomize_args=proj_config.kustomize_args,
         target_ref=target_ref,
+        kustomize_env=proj_config.env or None,
     )
 
     return result.model_dump_json(indent=2)
@@ -142,13 +143,14 @@ def kdrift_affected(repo_path: str, changed_files: list[str]) -> str:
 def kdrift_render(repo_path: str, overlay_path: str) -> str:
     """Render a single overlay and return the YAML output."""
     repo_root = git.find_repo_root(Path(repo_path))
-    proj_config = config.load_project_config(repo_root)
+    proj_config = config.resolve_project_config(config.load_project_config(repo_root))
     overlay = Path(overlay_path)
 
     result = render.render_overlay(
         overlay,
         repo_root / overlay,
         proj_config.kustomize_args,
+        env=proj_config.env or None,
     )
 
     if not result.success:

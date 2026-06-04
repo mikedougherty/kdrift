@@ -79,7 +79,7 @@ def diff(
 
     base_ref, target_ref = _parse_ref_range(ref)
 
-    proj_config = config.load_project_config(repo_root)
+    proj_config = config.resolve_project_config(config.load_project_config(repo_root))
     path_list = [Path(p) for p in paths] if paths else None
 
     if watch_mode:
@@ -92,6 +92,7 @@ def diff(
             paths=path_list,
             output_format=output_format,
             kustomize_args=proj_config.kustomize_args,
+            kustomize_env=proj_config.env or None,
         )
         return
 
@@ -105,6 +106,7 @@ def diff(
             overlay_filter=overlay_path,
             kustomize_args=proj_config.kustomize_args,
             target_ref=target_ref,
+            kustomize_env=proj_config.env or None,
         )
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

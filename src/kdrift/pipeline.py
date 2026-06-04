@@ -24,6 +24,7 @@ class _RenderContext:
     args: list[str]
     binary: str
     kust_ver: str
+    env: dict[str, str] | None = None
 
 
 def run_diff(  # noqa: PLR0913
@@ -33,6 +34,7 @@ def run_diff(  # noqa: PLR0913
     overlay_filter: Path | None = None,
     kustomize_args: list[str] | None = None,
     target_ref: str | None = None,
+    kustomize_env: dict[str, str] | None = None,
 ) -> models.DiffResult:
     """Run the full discover -> render -> diff pipeline.
 
@@ -44,6 +46,7 @@ def run_diff(  # noqa: PLR0913
         kustomize_args: Override kustomize build flags.
         target_ref: When set, compare ref vs target_ref (two committed states)
             instead of ref vs working tree.
+        kustomize_env: Extra env vars to inject into kustomize subprocesses.
 
     Returns:
         DiffResult with per-overlay, per-resource changes.
@@ -101,6 +104,7 @@ def run_diff(  # noqa: PLR0913
         args=args,
         binary=render.find_kustomize(),
         kust_ver=render.kustomize_version(),
+        env=kustomize_env,
     )
 
     overlay_results: list[models.OverlayResult] = []
@@ -127,7 +131,7 @@ def _diff_working_tree_vs_ref(
     overlay_results: list[models.OverlayResult],
 ) -> None:
     """Compare working tree against a baseline ref."""
-    candidate_results = render.render_overlays_parallel(affected, ctx.repo_root, ctx.args)
+    candidate_results = render.render_overlays_parallel(affected, ctx.repo_root, ctx.args, env=ctx.env)
 
     with git.Worktree(resolved_ref, ctx.repo_root) as wt:
         for overlay, cand_result in zip(affected, candidate_results, strict=True):
@@ -181,6 +185,7 @@ def _diff_ref_vs_ref(
                 target_wt.path / overlay.path,
                 ctx.args,
                 ctx.binary,
+                ctx.env,
             )
             if not target_result.success:
                 overlay_results.append(
@@ -192,7 +197,7 @@ def _diff_ref_vs_ref(
                 continue
 
             target_output = target_result.output
-            key = render.cache_key(resolved_target, overlay.path, ctx.args, ctx.kust_ver)
+            key = render.cache_key(resolved_target, overlay.path, ctx.args, ctx.kust_ver, ctx.env)
             render.set_cached_render(key, target_output)
 
             overlay_results.append(diff.diff_rendered(baseline_output, target_output, overlay.path))
@@ -205,7 +210,7 @@ def _render_with_cache(
     resolved_ref: str,
 ) -> str | None:
     """Render an overlay from a worktree, using the cache if available."""
-    key = render.cache_key(resolved_ref, overlay.path, ctx.args, ctx.kust_ver)
+    key = render.cache_key(resolved_ref, overlay.path, ctx.args, ctx.kust_ver, ctx.env)
     cached = render.get_cached_render(key)
     if cached is not None:
         return cached
@@ -215,6 +220,7 @@ def _render_with_cache(
         worktree_root / overlay.path,
         ctx.args,
         ctx.binary,
+        ctx.env,
     )
     if not result.success:
         return None

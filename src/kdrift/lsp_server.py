@@ -267,11 +267,12 @@ def _run_save_diagnostics(uri: str, file_path: Path) -> None:
 
     if git.has_commits(repo_root):
         try:
-            proj_config = config.load_project_config(repo_root)
+            proj_config = config.resolve_project_config(config.load_project_config(repo_root))
             diff_result = pipeline.run_diff(
                 repo_root=repo_root,
                 paths=[rel_path],
                 kustomize_args=proj_config.kustomize_args,
+                kustomize_env=proj_config.env or None,
             )
 
             total_changes = sum(len(o.changes) for o in diff_result.overlays)
@@ -498,10 +499,11 @@ def _run_full_diff_diagnostics() -> None:
         return
 
     try:
-        proj_config = config.load_project_config(repo_root)
+        proj_config = config.resolve_project_config(config.load_project_config(repo_root))
         diff_result = pipeline.run_diff(
             repo_root=repo_root,
             kustomize_args=proj_config.kustomize_args,
+            kustomize_env=proj_config.env or None,
         )
     except Exception:
         log.exception("reload_diff_pipeline_error")

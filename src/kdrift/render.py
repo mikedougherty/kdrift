@@ -60,6 +60,7 @@ def render_overlay(
     build_dir: Path,
     kustomize_args: list[str] | None = None,
     binary: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> models.RenderResult:
     """Run kustomize build on an overlay directory.
 
@@ -68,6 +69,7 @@ def render_overlay(
         build_dir: Absolute path to the directory to build (may be in a worktree).
         kustomize_args: Extra args for kustomize build.
         binary: Path to kustomize binary.
+        env: Extra environment variables to inject into the kustomize subprocess.
 
     Returns:
         RenderResult with the rendered YAML or error details.
@@ -78,12 +80,15 @@ def render_overlay(
     cmd = [binary, "build", *args, str(build_dir)]
     log.debug("kustomize_build", overlay=str(overlay_path), cmd=" ".join(cmd))
 
+    subprocess_env = {**os.environ, **env} if env else None
+
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             check=False,
+            env=subprocess_env,
         )
     except FileNotFoundError:
         return models.RenderResult(
@@ -106,12 +111,13 @@ def render_overlay(
     )
 
 
-def render_overlays_parallel(
+def render_overlays_parallel(  # noqa: PLR0913
     overlays: list[models.Overlay],
     build_root: Path,
     kustomize_args: list[str] | None = None,
     binary: str | None = None,
     max_workers: int | None = None,
+    env: dict[str, str] | None = None,
 ) -> list[models.RenderResult]:
     """Render multiple overlays in parallel.
 
@@ -121,6 +127,7 @@ def render_overlays_parallel(
         kustomize_args: Extra args for kustomize build.
         binary: Path to kustomize binary.
         max_workers: Max thread pool workers (defaults to min(len(overlays), 8)).
+        env: Extra environment variables to inject into kustomize subprocesses.
 
     Returns:
         List of RenderResults, one per overlay, preserving input order.
@@ -139,6 +146,7 @@ def render_overlays_parallel(
                 build_root / overlay.path,
                 kustomize_args,
                 binary,
+                env,
             ): overlay
             for overlay in overlays
         }
@@ -154,9 +162,12 @@ def cache_key(
     overlay_path: Path,
     kustomize_args: list[str],
     kustomize_ver: str,
+    env: dict[str, str] | None = None,
 ) -> str:
     """Compute a cache key for a baseline render."""
     parts = [ref, str(overlay_path), kustomize_ver, *kustomize_args]
+    if env:
+        parts.extend(f"{k}={v}" for k, v in sorted(env.items()))
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 

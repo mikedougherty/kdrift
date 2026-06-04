@@ -48,7 +48,12 @@ kustomize_args:
   - "--enable-helm"
   - "--load-restrictor"
   - "LoadRestrictionsNone"
+kustomize_binary: /usr/local/bin/kustomize  # optional, defaults to PATH
+env:                                        # extra env vars for kustomize subprocess
+  HELM_REGISTRY_TOKEN: "abc123"
 ```
+
+All fields can be overridden via environment variables (`KDRIFT_KUSTOMIZE_BINARY`, `KDRIFT_KUSTOMIZE_ARGS`, `KDRIFT_KUSTOMIZE_ENV_<NAME>`). See the [knowledge doc](docs/agents/knowledge/KNOWLEDGE.md) for details.
 
 ## Development
 

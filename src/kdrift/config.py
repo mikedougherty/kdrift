@@ -1,8 +1,9 @@
-"""Configuration hierarchy: .kdrift.yaml (project > org > user)."""
+"""Configuration hierarchy: .kdrift.yaml (project > org > user) + env overrides."""
 
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 
 import pydantic
@@ -38,6 +39,7 @@ class ProjectConfig(pydantic.BaseModel):
         ]
     )
     kustomize_binary: str | None = None
+    env: dict[str, str] = pydantic.Field(default_factory=dict)
 
 
 def load_project_config(start_dir: Path | None = None) -> ProjectConfig:
@@ -67,6 +69,42 @@ def load_project_config(start_dir: Path | None = None) -> ProjectConfig:
         merged.update(cfg)
 
     return ProjectConfig.model_validate(merged)
+
+
+def resolve_project_config(
+    yaml_config: ProjectConfig,
+    environ: dict[str, str] | None = None,
+) -> ProjectConfig:
+    """Merge .kdrift.yaml config with KDRIFT_KUSTOMIZE_* env var overrides.
+
+    Args:
+        yaml_config: Config loaded from .kdrift.yaml files.
+        environ: Environment to scan (defaults to os.environ).
+
+    Returns:
+        Resolved ProjectConfig with env var overrides applied.
+    """
+    env = environ if environ is not None else dict(os.environ)
+    overrides: dict[str, object] = {}
+
+    if "KDRIFT_KUSTOMIZE_BINARY" in env:
+        overrides["kustomize_binary"] = env["KDRIFT_KUSTOMIZE_BINARY"]
+
+    if "KDRIFT_KUSTOMIZE_ARGS" in env:
+        overrides["kustomize_args"] = shlex.split(env["KDRIFT_KUSTOMIZE_ARGS"])
+
+    kustomize_env = dict(yaml_config.env)
+    prefix = "KDRIFT_KUSTOMIZE_ENV_"
+    for key, value in env.items():
+        if key.startswith(prefix):
+            kustomize_env[key[len(prefix) :]] = value
+    if kustomize_env != yaml_config.env:
+        overrides["env"] = kustomize_env
+
+    if not overrides:
+        return yaml_config
+
+    return yaml_config.model_copy(update=overrides)
 
 
 def _walk_up_configs(start: Path) -> list[dict[str, object]]:

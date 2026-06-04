@@ -33,16 +33,31 @@ kustomize_args:
   - "--enable-helm"
   - "--load-restrictor"
   - "LoadRestrictionsNone"
+kustomize_binary: /usr/local/bin/kustomize
+env:
+  HELM_REGISTRY_TOKEN: "abc123"
+  SOPS_AGE_KEY_FILE: "/path/to/key"
 ```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `kustomize_args` | `list[str]` | `["--enable-helm", "--load-restrictor", "LoadRestrictionsNone"]` | Args passed to `kustomize build` |
+| `kustomize_binary` | `str` | `None` (uses PATH) | Path to kustomize binary |
+| `env` | `dict[str, str]` | `{}` | Extra env vars injected into the kustomize subprocess |
 
 Search order: project directory, parent directories, `$XDG_CONFIG_HOME/kdrift/`.
 
 ### Environment variables
 
+All project config fields can be overridden via environment variables. Env vars take precedence over `.kdrift.yaml` values.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KDRIFT_LOG_LEVEL` | `WARNING` | Log level (DEBUG, INFO, WARNING, ERROR) |
 | `KDRIFT_LOG_FORMAT` | `json` | Log format (`json` or `console`) |
+| `KDRIFT_KUSTOMIZE_BINARY` | None | Override `kustomize_binary` from yaml |
+| `KDRIFT_KUSTOMIZE_ARGS` | None | Override `kustomize_args` from yaml (space-separated, supports quoting) |
+| `KDRIFT_KUSTOMIZE_ENV_<NAME>` | None | Inject `<NAME>=<value>` into the kustomize subprocess env |
 
 ### MCP configuration
 

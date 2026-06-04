@@ -81,6 +81,42 @@ class TestRenderOverlay:
 
 
 @pytest.mark.unit
+class TestRenderOverlayEnv:
+    def test_env_passed_to_subprocess(self, tmp_path):
+        script = tmp_path / "fake-kustomize"
+        script.write_text('#!/bin/sh\necho "VAR=$MY_CUSTOM_VAR"\n')
+        script.chmod(0o755)
+        result = render.render_overlay(Path("k8s/dev"), tmp_path, binary=str(script), env={"MY_CUSTOM_VAR": "hello"})
+        assert result.success
+        assert "VAR=hello" in (result.output or "")
+
+    def test_env_none_inherits_parent(self, tmp_path):
+        script = tmp_path / "fake-kustomize"
+        script.write_text("#!/bin/sh\necho ok\n")
+        script.chmod(0o755)
+        result = render.render_overlay(Path("k8s/dev"), tmp_path, binary=str(script), env=None)
+        assert result.success
+
+
+@pytest.mark.unit
+class TestCacheKeyEnv:
+    def test_different_env_produces_different_key(self):
+        key1 = render.cache_key("abc", Path("k8s/dev"), [], "v5", env={"A": "1"})
+        key2 = render.cache_key("abc", Path("k8s/dev"), [], "v5", env={"A": "2"})
+        assert key1 != key2
+
+    def test_none_env_matches_no_env(self):
+        key1 = render.cache_key("abc", Path("k8s/dev"), [], "v5", env=None)
+        key2 = render.cache_key("abc", Path("k8s/dev"), [], "v5")
+        assert key1 == key2
+
+    def test_env_order_independent(self):
+        key1 = render.cache_key("abc", Path("k8s/dev"), [], "v5", env={"A": "1", "B": "2"})
+        key2 = render.cache_key("abc", Path("k8s/dev"), [], "v5", env={"B": "2", "A": "1"})
+        assert key1 == key2
+
+
+@pytest.mark.unit
 class TestRenderOverlaysParallel:
     def test_empty_list(self, tmp_path):
         results = render.render_overlays_parallel([], tmp_path)

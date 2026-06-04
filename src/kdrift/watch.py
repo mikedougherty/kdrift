@@ -21,12 +21,13 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
 DEBOUNCE_MS = 300
 
 
-def watch(
+def watch(  # noqa: PLR0913
     repo_root: Path,
     ref: str = "HEAD",
     paths: list[Path] | None = None,
     output_format: str = "unified",
     kustomize_args: list[str] | None = None,
+    kustomize_env: dict[str, str] | None = None,
 ) -> None:
     """Watch for file changes and continuously diff affected overlays.
 
@@ -36,6 +37,7 @@ def watch(
         paths: Scope watching to these paths.
         output_format: "unified" or "json".
         kustomize_args: Override kustomize build flags.
+        kustomize_env: Extra environment variables for kustomize subprocesses.
     """
     args = kustomize_args if kustomize_args is not None else None
     watch_paths = [str(repo_root / p) for p in paths] if paths else [str(repo_root)]
@@ -55,7 +57,7 @@ def watch(
                 continue
 
             log.debug("changes_detected", files=[str(f) for f in changed_files])
-            _run_and_print(repo_root, ref, paths, output_format, args)
+            _run_and_print(repo_root, ref, paths, output_format, args, kustomize_env)
     except KeyboardInterrupt:
         log.info("watch_stopped")
 
@@ -85,12 +87,13 @@ def _extract_changed_files(
     return result
 
 
-def _run_and_print(
+def _run_and_print(  # noqa: PLR0913
     repo_root: Path,
     ref: str,
     paths: list[Path] | None,
     output_format: str,
     kustomize_args: list[str] | None,
+    kustomize_env: dict[str, str] | None = None,
 ) -> None:
     """Run the diff pipeline and print results."""
     try:
@@ -99,6 +102,7 @@ def _run_and_print(
             ref=ref,
             paths=paths,
             kustomize_args=kustomize_args,
+            kustomize_env=kustomize_env,
         )
     except Exception:
         log.exception("pipeline_error")
