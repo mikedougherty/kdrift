@@ -1,0 +1,109 @@
+{
+  "name": "vscode-kdrift",
+  "displayName": "kdrift",
+  "description": "Kustomize manifest drift detection with live preview",
+  "version": "0.1.0",
+  "publisher": "mikedougherty",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mikedougherty/kdrift"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/kustomization.yaml",
+    "workspaceContains:**/kustomization.yml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kdrift.openPreview",
+        "title": "Open Drift Preview to the Side",
+        "category": "kdrift",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "kdrift.openLockedPreview",
+        "title": "Open Locked Drift Preview to the Side",
+        "category": "kdrift",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "kdrift.refreshPreview",
+        "title": "Refresh Preview",
+        "category": "kdrift",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "kdrift.openPreview",
+          "when": "resourceFilename =~ /kustomization\\.(yaml|yml)$/",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "kdrift",
+      "properties": {
+        "kdrift.binaryPath": {
+          "type": "string",
+          "default": "kdrift",
+          "description": "Path to the kdrift binary"
+        },
+        "kdrift.debounceInterval": {
+          "type": "number",
+          "default": 500,
+          "description": "Milliseconds before preview refresh after save"
+        },
+        "kdrift.ref": {
+          "type": "string",
+          "default": "HEAD",
+          "description": "Baseline git ref for drift comparison"
+        },
+        "kdrift.kustomizeArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra kustomize build args (overrides .kdrift.yaml when set)"
+        },
+        "kdrift.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable LSP server for diagnostics and CodeLens"
+        },
+        "kdrift.lsp.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable LSP debug logging to ~/.cache/kdrift/kdrift.log"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build -- --minify",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "lint": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  }
+}
