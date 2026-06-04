@@ -22,7 +22,7 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
 def main(ctx: click.Context, log_level: str) -> None:
     """Kustomize manifest drift detection tool."""
     cfg = config.AppConfig()
-    kdrift_logging.configure_logging(log_level=log_level, log_format=cfg.log_format)
+    kdrift_logging.configure_logging(log_level=log_level, log_format=cfg.log_format, stream="stderr")
 
     ctx.ensure_object(dict)
     ctx.obj["config"] = cfg
