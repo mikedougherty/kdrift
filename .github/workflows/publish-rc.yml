@@ -1,0 +1,59 @@
+name: Publish RC to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "RC version to publish (e.g., 0.2.0rc1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qP '^\d+\.\d+\.\d+rc\d+$'; then
+            echo "::error::Version must match format X.Y.Zrc# (e.g., 0.2.0rc1)"
+            exit 1
+          fi
+
+  build:
+    name: Build distribution
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Set RC version
+        run: sed -i 's/^version = ".*"/version = "${{ inputs.version }}"/' pyproject.toml
+
+      - name: Build package
+        run: uv build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

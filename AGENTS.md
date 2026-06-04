@@ -109,6 +109,42 @@ While the project is pre-1.0, `bump-minor-pre-major` and `bump-patch-for-minor-p
 | `.release-please-manifest.json` | Tracks current version (updated by release-please) |
 | `.github/workflows/release-please.yml` | Runs release-please on every push to main |
 | `.github/workflows/publish.yml` | Builds and publishes to PyPI on GitHub release |
+| `.github/workflows/publish-rc.yml` | Manual workflow to publish RC versions to PyPI |
+
+#### RC (release candidate) releases
+
+Use RC releases to test a version on PyPI before cutting a stable release. RC versions are published to real PyPI but not installed by default (users must pass `--pre`).
+
+The workflow is triggered manually via `gh workflow run` or the GitHub Actions UI.
+
+**When the user says "publish an rc"**, follow these steps:
+
+1. **Determine the target version.** Check for an open release-please PR:
+   ```bash
+   gh pr list --label "autorelease: pending" --json title,number --jq '.[0].title'
+   ```
+   The PR title contains the version (e.g., "chore(main): release 0.2.0"). If no PR exists, read `.release-please-manifest.json` for the current version and infer the next version from conventional commits since then (feat = patch bump, feat! = minor bump).
+
+2. **Determine the RC number.** Check PyPI for existing RCs of that version:
+   ```bash
+   curl -s https://pypi.org/pypi/kdrift/json | jq -r '.releases | keys[]' | grep "<VERSION>rc" | sort -V
+   ```
+   If no results, use `rc1`. If `0.2.0rc1` exists, use `rc2`, etc.
+
+3. **Trigger the workflow:**
+   ```bash
+   gh workflow run publish-rc.yml -f version=<VERSION>rc<N>
+   ```
+
+4. **Verify the publish succeeded:**
+   ```bash
+   gh run list --workflow=publish-rc.yml --limit 1
+   ```
+
+5. **Test the RC:**
+   ```bash
+   uv tool install kdrift==<VERSION>rc<N>
+   ```
 
 ## Key Files
 
