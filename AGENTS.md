@@ -69,6 +69,47 @@ make lint        # ruff linter
 - CI runs on push to main and PRs: lint -> format-check -> typecheck -> test
 - ubuntu-latest runners (not self-hosted)
 
+### Releases (release-please)
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please). The full pipeline:
+
+```
+conventional commits on main
+  → release-please opens/updates a "Release PR" (version bump + CHANGELOG)
+  → merge the Release PR
+  → release-please creates git tag (v0.X.Y) + GitHub release
+  → publish.yaml triggers on the release → builds and publishes to PyPI
+```
+
+**Version bumps are automated.** Do not manually edit `version` in `pyproject.toml`. Release-please owns that field and updates it in the Release PR based on conventional commit types.
+
+#### Conventional commit → version bump mapping
+
+| Prefix | Bump | Example |
+|--------|------|---------|
+| `feat:` | patch (minor when >= 1.0) | New CLI flag, new MCP tool |
+| `fix:` | patch | Bug fix |
+| `feat!:` or `BREAKING CHANGE:` | minor (major when >= 1.0) | Removed flag, changed output format |
+| `docs:`, `chore:`, `refactor:`, `test:`, `ci:` | no release | Documentation, maintenance |
+
+While the project is pre-1.0, `bump-minor-pre-major` and `bump-patch-for-minor-pre-major` are enabled, so breaking changes bump minor and features bump patch.
+
+#### How to trigger a release
+
+1. Push commits with releasable types (`feat:`, `fix:`) to main
+2. Release-please automatically opens or updates a Release PR
+3. Review and merge the Release PR when ready to cut a release
+4. Tag, GitHub release, and PyPI publish happen automatically
+
+#### Configuration files
+
+| File | Purpose |
+|------|---------|
+| `release-please-config.json` | Release strategy, version bump rules, changelog path |
+| `.release-please-manifest.json` | Tracks current version (updated by release-please) |
+| `.github/workflows/release-please.yml` | Runs release-please on every push to main |
+| `.github/workflows/publish.yml` | Builds and publishes to PyPI on GitHub release |
+
 ## Key Files
 
 | File | Purpose |
