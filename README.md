@@ -1,6 +1,6 @@
 # kdrift
 
-Kustomize manifest drift detection. Discovers which overlays are affected by your changes, renders baselines and candidates, and diffs per-resource.
+CLI, MCP, LSP, and VS Code extension for kustomize manifest drift detection. Discovers which overlays are affected by your changes, renders baselines and candidates, and diffs per-resource.
 
 ## Install
 
