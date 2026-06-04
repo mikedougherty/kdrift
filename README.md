@@ -5,14 +5,17 @@ CLI, MCP, LSP, and VS Code extension for kustomize manifest drift detection. Dis
 ## Install
 
 ```bash
-# From GitHub (recommended for now)
-uv tool install git+https://github.com/mikedougherty/kdrift
-
-# From PyPI (once published)
 uv tool install kdrift
+# or: pip install kdrift
 ```
 
 Requires Python 3.13+ and `kustomize` on PATH.
+
+For unreleased changes on main:
+
+```bash
+uv tool install git+https://github.com/mikedougherty/kdrift
+```
 
 ## Usage
 
@@ -65,7 +68,7 @@ Give your AI agent kustomize drift detection in two steps:
 **1. Install kdrift:**
 
 ```bash
-uv tool install git+https://github.com/mikedougherty/kdrift
+uv tool install kdrift
 ```
 
 **2. Add to your Claude Code MCP config** (`.claude.json` or project `.mcp.json`):
