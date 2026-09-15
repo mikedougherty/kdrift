@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/mikedougherty/kdrift/compare/v0.1.3...v0.1.4) (2026-09-15)
+
+
+### Bug Fixes
+
+* select diff overlays by path instead of git-pathspec-filtering changes ([9985482](https://github.com/mikedougherty/kdrift/commit/998548227d0b1b3b78176d0c7a059f7dc2f0fea1)), closes [#7](https://github.com/mikedougherty/kdrift/issues/7)
+
+
+### Documentation
+
+* clarify diff paths semantics (overlay selection, not pathspec) ([17187c5](https://github.com/mikedougherty/kdrift/commit/17187c5c1a58ebe7b1d3892e1058d632c7508b25))
+
 ## [0.1.3](https://github.com/mikedougherty/kdrift/compare/v0.1.2...v0.1.3) (2026-06-04)
 
 
