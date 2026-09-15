@@ -91,7 +91,7 @@ Add `--debug` to enable file logging to `~/.cache/kdrift/kdrift.log`.
 
 | Tool | Description |
 |------|-------------|
-| `kdrift_diff` | Diff overlays against a baseline ref. Returns per-overlay, per-resource structured JSON. Supports `target_ref` for two-ref comparison. |
+| `kdrift_diff` | Diff overlays against a baseline ref. Returns per-overlay, per-resource structured JSON plus a `warnings` list. Supports `target_ref` for two-ref comparison. `paths` narrows the reported overlays (by overlay dir, file within, or upstream base) against the full affected set — transitive base drift is preserved, and unmatched/drift-free paths surface as warnings, not a silent empty. `overlay` force-diffs exactly one overlay. |
 | `kdrift_discover` | Find leaf overlays. Defaults to git-changed overlays; `show_all=true` for the full list. |
 | `kdrift_affected` | Given a list of changed files, find which overlays are affected. |
 | `kdrift_render` | Render a single overlay to YAML. |
@@ -121,11 +121,18 @@ All tools return JSON. The diff result structure:
       ],
       "error": null
     }
-  ]
+  ],
+  "errors": [],
+  "warnings": []
 }
 ```
 
 Status values: `modified`, `added`, `removed`.
+
+`warnings` holds non-fatal notes (they do not affect the exit code): a `paths`
+entry that matched no overlay, or that selected an overlay with no drift. When
+you scoped a diff with `paths` and got empty `overlays`, check `warnings` before
+concluding "no drift" — the path may simply have missed.
 
 ## Error Handling
 
