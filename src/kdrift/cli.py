@@ -44,7 +44,12 @@ def _parse_ref_range(ref: str) -> tuple[str, str | None]:
 @click.argument("paths", nargs=-1, type=click.Path(exists=False))
 @click.option("--repo", "-C", "repo_path", type=click.Path(exists=True), default=None, help="Repository root.")
 @click.option("--ref", default="HEAD", help="Git ref for baseline, or A..B for two-ref comparison.")
-@click.option("--overlay", type=click.Path(), default=None, help="Diff only this overlay.")
+@click.option(
+    "--overlay",
+    type=click.Path(),
+    default=None,
+    help="Force-diff exactly this one overlay, regardless of what changed. Takes precedence over PATHS.",
+)
 @click.option(
     "--format",
     "output_format",
@@ -65,7 +70,16 @@ def diff(
     watch_mode: bool,
     check: bool,
 ) -> None:
-    """Diff kustomize overlays against a baseline ref."""
+    """Diff kustomize overlays against a baseline ref.
+
+    PATHS selects which affected overlays to report. A path may name an overlay
+    directory (or an ancestor), a file inside an overlay, or an upstream input
+    such as a shared base/. Selection runs against every change in the tree, so
+    an overlay is reported even when its only drift comes from a base outside
+    the given paths. Paths that match nothing, or that select an overlay with no
+    drift, are reported as warnings. With no PATHS, every affected overlay is
+    diffed.
+    """
     start = Path(repo_path) if repo_path else (Path(paths[0]).resolve() if paths else None)
     try:
         repo_root = git.find_repo_root(start)
@@ -112,10 +126,7 @@ def diff(
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    if output_format == "json":
-        _print_json(result)
-    else:
-        _print_unified(result)
+    _print_result(result, output_format)
 
     if result.has_errors:
         sys.exit(1)
@@ -147,6 +158,17 @@ def lsp(ctx: click.Context, debug: bool) -> None:
     from kdrift import lsp_server
 
     lsp_server.run_lsp_server()
+
+
+def _print_result(result: models.DiffResult, output_format: str) -> None:
+    """Print diff results and any non-fatal warnings (warnings go to stderr)."""
+    if output_format == "json":
+        _print_json(result)
+    else:
+        _print_unified(result)
+
+    for warning in result.warnings:
+        click.echo(f"WARNING: {warning}", err=True)
 
 
 def _print_json(result: models.DiffResult) -> None:

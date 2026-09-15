@@ -7,6 +7,7 @@ Called by CLI, watch mode, and future MCP/LSP servers.
 from __future__ import annotations
 
 import dataclasses
+import os.path
 from pathlib import Path
 
 import structlog
@@ -41,8 +42,16 @@ def run_diff(  # noqa: PLR0913
     Args:
         repo_root: Git repository root.
         ref: Git ref for baseline comparison.
-        paths: Scope changed-file detection to these paths.
-        overlay_filter: Only diff this specific overlay.
+        paths: Select which affected overlays to report. Each path selects an
+            overlay when it names the overlay directory (or an ancestor of it),
+            names a file inside the overlay, or names an upstream input the
+            overlay depends on (e.g. a shared ``base/``). Selection runs against
+            the full affected set computed from *all* changes, so an overlay is
+            reported even when its only change comes from a shared base outside
+            the given paths. Paths that match no overlay, or that select an
+            overlay with no drift, are surfaced as non-fatal warnings.
+        overlay_filter: Force-diff exactly this one overlay, regardless of
+            whether anything changed. Takes precedence over ``paths``.
         kustomize_args: Override kustomize build flags.
         target_ref: When set, compare ref vs target_ref (two committed states)
             instead of ref vs working tree.
@@ -62,14 +71,21 @@ def run_diff(  # noqa: PLR0913
         resolved_target = git.resolve_ref(target_ref, repo_root)
         short_target = git.get_short_sha(target_ref, repo_root)
 
+    # NOTE: `paths` is deliberately NOT passed to the git helpers as a pathspec.
+    # A pathspec would drop changes outside the given paths (e.g. a shared
+    # base/), hiding drift in an overlay that is affected only transitively.
+    # Instead we detect all changes, resolve the full affected set through the
+    # dependency graph, then select overlays by path afterwards.
     if target_ref is not None:
-        changed = git.changed_files_between(ref, target_ref, paths, repo_root)
+        changed = git.changed_files_between(ref, target_ref, None, repo_root)
     else:
-        changed = git.changed_files(ref, paths, repo_root)
+        changed = git.changed_files(ref, None, repo_root)
+
+    warnings = _nonexistent_path_warnings(paths, repo_root) if paths else []
 
     if not changed:
         log.info("no_changes_detected", ref=short_ref, target_ref=short_target)
-        return models.DiffResult(ref=short_ref, target_ref=short_target)
+        return models.DiffResult(ref=short_ref, target_ref=short_target, warnings=warnings)
 
     log.debug("changed_files", count=len(changed), ref=short_ref, target_ref=short_target)
 
@@ -83,6 +99,7 @@ def run_diff(  # noqa: PLR0913
                 ref=short_ref,
                 target_ref=short_target,
                 errors=[f"No kustomization.yaml found in {overlay_filter}"],
+                warnings=warnings,
             )
         affected = [
             models.Overlay(
@@ -92,10 +109,13 @@ def run_diff(  # noqa: PLR0913
         ]
     else:
         affected = graph.affected_overlays(changed)
+        if paths:
+            affected, select_warnings = _select_by_paths(affected, paths, graph, repo_root)
+            warnings.extend(select_warnings)
 
     if not affected:
         log.info("no_affected_overlays", ref=short_ref, target_ref=short_target)
-        return models.DiffResult(ref=short_ref, target_ref=short_target)
+        return models.DiffResult(ref=short_ref, target_ref=short_target, warnings=warnings)
 
     log.info("affected_overlays", count=len(affected), overlays=[str(o.path) for o in affected])
 
@@ -121,7 +141,89 @@ def run_diff(  # noqa: PLR0913
         target_ref=short_target,
         overlays=overlay_results,
         errors=errors,
+        warnings=warnings,
     )
+
+
+def _normalize_path(path: Path, repo_root: Path) -> Path:
+    """Normalize a user-supplied path to a repo-root-relative form."""
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(repo_root.resolve())
+        except ValueError:
+            return path
+    return Path(os.path.normpath(str(path)))
+
+
+def _is_within(inner: Path, outer: Path) -> bool:
+    """True if `inner` equals `outer` or is nested under it."""
+    if inner == outer:
+        return True
+    try:
+        inner.relative_to(outer)
+    except ValueError:
+        return False
+    return True
+
+
+def _path_selects_overlay(overlay_dir: Path, path: Path) -> bool:
+    """True if `path` names the overlay, an ancestor of it, or a file within it."""
+    return _is_within(overlay_dir, path) or _is_within(path, overlay_dir)
+
+
+def _nonexistent_path_warnings(paths: list[Path], repo_root: Path) -> list[str]:
+    """Warn for selection paths that don't exist on disk (likely typos)."""
+    warnings: list[str] = []
+    for raw in paths:
+        norm = _normalize_path(raw, repo_root)
+        if not (repo_root / norm).exists():
+            warnings.append(f"path '{norm}' does not exist in the repository — no overlays selected for it")
+    return warnings
+
+
+def _select_by_paths(
+    affected: list[models.Overlay],
+    paths: list[Path],
+    graph: discover.DependencyGraph,
+    repo_root: Path,
+) -> tuple[list[models.Overlay], list[str]]:
+    """Filter the affected overlays down to those the given paths select.
+
+    A path selects an affected overlay when it (a) names the overlay directory
+    or an ancestor of it, (b) names a file inside the overlay, or (c) names an
+    upstream input the overlay depends on (a shared base/component). Selection
+    runs against the already-computed affected set, so transitive drift via a
+    shared base is preserved. Existing paths that select no drifting overlay
+    yield a non-fatal warning so an empty result isn't misread as "no drift".
+    """
+    selected: dict[Path, models.Overlay] = {}
+    warnings: list[str] = []
+    all_leaves = [o.path for o in graph.leaf_overlays]
+
+    for raw in paths:
+        norm = _normalize_path(raw, repo_root)
+
+        # A path is a "target" when it names a known leaf overlay, an ancestor
+        # of one, or a file inside one. Otherwise it's treated as an upstream
+        # input (a shared base/component). The distinction matters: an overlay
+        # directory that is simply clean must warn, not fall through to the
+        # input branch, whose dependency lookup would over-match via the parent
+        # directory and pull in unrelated overlays.
+        is_target = any(_path_selects_overlay(leaf, norm) for leaf in all_leaves)
+        if is_target:
+            matched = [o for o in affected if _path_selects_overlay(o.path, norm)]
+        else:
+            fed = {o.path for o in graph.affected_overlays([norm])}
+            matched = [o for o in affected if o.path in fed]
+
+        if matched:
+            for o in matched:
+                selected[o.path] = o
+        elif (repo_root / norm).exists():
+            warnings.append(f"path '{norm}' selected no overlay with drift against the baseline")
+
+    ordered = [o for o in affected if o.path in selected]
+    return ordered, warnings
 
 
 def _diff_working_tree_vs_ref(
