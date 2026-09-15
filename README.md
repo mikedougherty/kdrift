@@ -21,8 +21,10 @@ uv tool install git+https://github.com/mikedougherty/kdrift
 
 ```bash
 kdrift diff                             # diff all affected overlays vs HEAD
+kdrift diff k8s/staging                 # diff only the staging overlay (see Scoping)
+kdrift diff k8s/dev k8s/staging         # diff several named overlays
 kdrift diff k8s/base/deployment.yaml    # diff overlays affected by this file
-kdrift diff --overlay k8s/dev           # diff only this overlay
+kdrift diff --overlay k8s/dev           # force-diff one overlay, even with no changes
 kdrift diff --ref main~3                # diff against a specific ref
 kdrift diff --ref main~5..main~2        # compare two commits
 kdrift diff -C /path/to/repo            # target a different repository
@@ -30,6 +32,24 @@ kdrift diff --format json               # structured JSON output
 kdrift diff --check                     # exit non-zero if drift exists (CI/pre-commit)
 kdrift diff --watch                     # continuous mode: re-diff on file save
 ```
+
+### Scoping with PATHS
+
+The positional `PATHS` narrow which overlays are reported. They do **not** work
+like a `git` pathspec on changed files — scoping to one environment never hides
+drift that reaches it through a shared base.
+
+- A path selects an overlay when it names the overlay directory (or an ancestor),
+  a file inside the overlay, or an upstream input the overlay depends on (a shared
+  `base/` or component).
+- Selection runs against the full set of overlays affected by **all** your changes.
+  So `kdrift diff k8s/staging` still reports staging when the only change is in
+  `k8s/base/` that staging consumes.
+- A path that matches nothing, or that selects an overlay with no drift, is
+  reported in `warnings` (JSON) / on stderr — an empty result is never silently
+  read as "no drift".
+- `--overlay` is different: it force-diffs exactly one overlay regardless of what
+  changed, and takes precedence over `PATHS`.
 
 ## How It Works
 

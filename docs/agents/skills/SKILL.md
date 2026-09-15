@@ -133,15 +133,31 @@ kdrift diff --ref HEAD~3..HEAD
 kdrift_diff(repo_path=".", ref="HEAD~3", target_ref="HEAD")
 ```
 
-### Scoping to specific paths
+### Scoping to specific overlays (paths)
 
-Both CLI and MCP accept path arguments to narrow changed-file detection:
+Both CLI and MCP accept path arguments that **narrow which overlays are
+reported** — they are NOT a git pathspec on changed files. Selection runs
+against the full set of overlays affected by all your changes, so scoping to one
+environment never hides drift that reaches it through a shared base.
+
+A path selects an overlay when it names the overlay directory (or an ancestor),
+a file inside the overlay, or an upstream input the overlay depends on (a shared
+`base/`/component).
 
 ```bash
-kdrift diff k8s/base/   # only changes under k8s/base/
+kdrift diff k8s/staging          # the staging overlay, incl. drift from a shared base/
+kdrift diff k8s/dev k8s/staging  # several named overlays
+kdrift diff k8s/base/            # every overlay that consumes k8s/base/
 ```
 
 **MCP:**
 ```
-kdrift_diff(repo_path=".", paths=["k8s/base/"])
+kdrift_diff(repo_path=".", paths=["k8s/staging"])
+kdrift_diff(repo_path=".", paths=["k8s/dev", "k8s/staging", "k8s/prod"])
 ```
+
+**Do not read an empty result as "no drift" when you passed `paths`.** A path
+that matches no overlay, or selects an overlay with no drift, is reported in the
+`warnings` list (JSON) or on stderr (CLI). If you want a definitive single-overlay
+answer regardless of what changed, use `overlay=` (MCP) / `--overlay` (CLI), which
+force-diffs exactly that overlay.
