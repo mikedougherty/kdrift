@@ -29,8 +29,17 @@ server = FastMCP(
     name="kdrift_diff",
     description=(
         "Diff kustomize overlays against a baseline git ref. Returns per-overlay, "
-        "per-resource changes with structured diffs. Use after editing kustomize files "
-        "to verify impact before committing."
+        "per-resource changes with structured diffs, plus a 'warnings' list. Use after "
+        "editing kustomize files to verify impact before committing.\n\n"
+        "With no 'paths', every overlay affected by the current changes is diffed "
+        "(transitive base/component changes included). 'paths' NARROWS that set to the "
+        "overlays you name: pass overlay directories (e.g. ['k8s/staging']) to check "
+        "specific environments. An overlay is still reported when its only drift comes "
+        "from a shared base/ outside the given paths, so scoping to one environment does "
+        "not hide base-driven drift. A path that matches no overlay, or selects an overlay "
+        "with no drift, appears in 'warnings' rather than silently returning empty — do not "
+        "read an empty 'overlays' with warnings as a clean 'no drift'. Use 'overlay' to "
+        "force-diff exactly one overlay even when nothing changed."
     ),
 )
 def kdrift_diff(
@@ -42,8 +51,18 @@ def kdrift_diff(
 ) -> str:
     """Run the full diff pipeline and return structured JSON results.
 
-    When target_ref is provided, compares ref (baseline) vs target_ref
-    instead of ref vs working tree.
+    Args:
+        repo_path: Path inside the target git repository.
+        ref: Baseline git ref (default HEAD).
+        paths: Narrow the reported overlays to those selected by these paths
+            (overlay dirs, files within overlays, or upstream bases they depend
+            on). Selection runs against the full affected set, so transitive
+            base/ drift is preserved. Unmatched or drift-free paths surface as
+            warnings.
+        overlay: Force-diff exactly this one overlay regardless of changes.
+            Takes precedence over paths.
+        target_ref: When provided, compare ref (baseline) vs target_ref
+            (two committed states) instead of ref vs working tree.
     """
     repo_root = git.find_repo_root(Path(repo_path))
     proj_config = config.resolve_project_config(config.load_project_config(repo_root))

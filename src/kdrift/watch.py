@@ -124,10 +124,12 @@ def _print_header(repo_root: Path, ref: str) -> None:
 
 def _print_json(result: models.DiffResult) -> None:
     """Print structured JSON output for a watch cycle."""
+    dumped = json.loads(result.model_dump_json())
     output = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "ref": result.ref,
-        "overlays": json.loads(result.model_dump_json())["overlays"],
+        "overlays": dumped["overlays"],
+        "warnings": dumped["warnings"],
     }
     print(json.dumps(output))
 
@@ -138,6 +140,8 @@ def _print_unified(result: models.DiffResult) -> None:
 
     if not result.has_changes and not result.has_errors:
         print("  No drift detected.")
+        for warning in result.warnings:
+            print(f"  WARNING: {warning}")
         return
 
     for overlay_result in result.overlays:
@@ -165,3 +169,6 @@ def _print_unified(result: models.DiffResult) -> None:
 
     for error in result.errors:
         print(f"  ERROR: {error}")
+
+    for warning in result.warnings:
+        print(f"  WARNING: {warning}")

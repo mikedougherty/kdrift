@@ -101,6 +101,7 @@ class DiffResult(pydantic.BaseModel):
     target_ref: str | None = None
     overlays: list[OverlayResult] = pydantic.Field(default_factory=list)
     errors: list[str] = pydantic.Field(default_factory=list)
+    warnings: list[str] = pydantic.Field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
