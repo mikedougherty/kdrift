@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/mikedougherty/kdrift/compare/v0.1.4...v0.1.5) (2026-09-16)
+
+
+### Bug Fixes
+
+* migrate MCP server to mcp 2.x API ([d47cee7](https://github.com/mikedougherty/kdrift/commit/d47cee7fc330fb002ad1887cf597f2ad46a76aca))
+
 ## [0.1.4](https://github.com/mikedougherty/kdrift/compare/v0.1.3...v0.1.4) (2026-09-15)
 
 
