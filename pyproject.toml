@@ -27,7 +27,7 @@ dependencies = [
     "click>=8.0",
     "pyyaml>=6.0.3",
     "watchfiles>=1.2.0",
-    "mcp>=1.27.2",
+    "mcp>=2.2.0,<3",
     "pygls>=2.1.1",
 ]
 

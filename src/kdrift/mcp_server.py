@@ -10,11 +10,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from kdrift import config, discover, git, pipeline, render
 
-server = FastMCP(
+server = MCPServer(
     name="kdrift",
     instructions=(
         "Kustomize manifest drift detection. Use kdrift_diff to check how your "
