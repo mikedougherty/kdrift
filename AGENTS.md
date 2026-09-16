@@ -153,7 +153,7 @@ The workflow is triggered manually via `gh workflow run` or the GitHub Actions U
 | `src/kdrift/config.py` | Application config (pydantic-settings) |
 | `src/kdrift/logging.py` | structlog configuration |
 | `src/kdrift/lsp_server.py` | LSP server (pygls) |
-| `src/kdrift/mcp_server.py` | MCP server (FastMCP) |
+| `src/kdrift/mcp_server.py` | MCP server (MCPServer, mcp 2.x) |
 | `tests/conftest.py` | Shared test fixtures |
 | `tests/test_mcp_integration.py` | MCP integration test harness |
 | `Makefile` | Standard development targets |
