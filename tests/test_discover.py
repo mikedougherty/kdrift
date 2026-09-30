@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from kdrift import discover
+from kdrift import discover, models
 
 
 @pytest.fixture()
@@ -142,6 +142,49 @@ class TestChartSubtreeWatches:
 
         external = graph.external_sources(graph.leaf_overlays)
         assert (ext_home / "mychart").resolve() in external
+
+    def test_external_refs_for_base_declared_reaches_leaf(self, tmp_path):
+        repo = tmp_path / "repo"
+        base = repo / "base"
+        dev = repo / "dev"
+        base.mkdir(parents=True)
+        dev.mkdir(parents=True)
+        ext_home = tmp_path / "ext"
+        (ext_home / "mychart").mkdir(parents=True)
+        (base / "kustomization.yaml").write_text(
+            f"helmGlobals:\n  chartHome: {ext_home}\nhelmCharts:\n  - name: mychart\n"
+        )
+        (dev / "kustomization.yaml").write_text("resources:\n  - ../base\n")
+
+        graph = discover.DependencyGraph(repo)
+        graph.build()
+
+        # Leaf `dev` includes base's external chart.
+        by_leaf = graph.external_refs_for(graph.leaf_overlays)
+        assert Path("dev") in by_leaf
+        # Forced NON-leaf `base` (--overlay base) must still resolve its own ref
+        # (regression guard: leaf-intersection would have missed this).
+        forced = [models.Overlay(path=Path("base"), kustomization_file=Path("base/kustomization.yaml"))]
+        by_forced = graph.external_refs_for(forced)
+        assert Path("base") in by_forced
+
+    def test_external_refs_for_base_declared_reaches_all_leaves(self, tmp_path):
+        repo = tmp_path / "repo"
+        for env in ("base", "dev", "prod"):
+            (repo / env).mkdir(parents=True)
+        ext_home = tmp_path / "ext"
+        (ext_home / "mychart").mkdir(parents=True)
+        (repo / "base" / "kustomization.yaml").write_text(
+            f"helmGlobals:\n  chartHome: {ext_home}\nhelmCharts:\n  - name: mychart\n"
+        )
+        (repo / "dev" / "kustomization.yaml").write_text("resources:\n  - ../base\n")
+        (repo / "prod" / "kustomization.yaml").write_text("resources:\n  - ../base\n")
+
+        graph = discover.DependencyGraph(repo)
+        graph.build()
+        by_leaf = graph.external_refs_for(graph.leaf_overlays)
+        assert Path("dev") in by_leaf
+        assert Path("prod") in by_leaf
 
     def test_in_repo_chart_has_no_external_sources(self, tmp_path):
         app = tmp_path / "app"

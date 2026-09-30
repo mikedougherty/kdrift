@@ -4,7 +4,7 @@ Detect kustomize manifest drift before committing or applying changes. Works via
 
 ## When to Use
 
-- After editing kustomize overlays, bases, patches, helm values, or generator files
+- After editing kustomize overlays, bases, patches, helm values, generator files, or helm chart files (including a chart whose source lives in another local repo)
 - Before committing changes to verify rendered manifest impact
 - When reviewing kustomize PRs to understand the blast radius
 - As a CI gate (`--check` mode exits non-zero on drift)
@@ -120,6 +120,18 @@ After editing a patch or helm values file:
 2. Check that only the intended resources changed
 3. Verify no overlays errored (broken kustomize builds)
 4. If unexpected overlays are affected, check the dependency graph with `kdrift_discover`
+
+### Charts whose source is in another repo
+
+If an overlay's `helmGlobals.chartHome` points at a chart in a separate local git
+checkout, `kdrift_diff` renders the baseline against that repo at its HEAD, so an
+uncommitted edit in the external chart shows as drift. No extra flags. Two things
+to watch in the result:
+- A `warnings` entry naming an external source means it couldn't be pinned
+  (non-git, read-only, or resolving back into the repo) — its drift is NOT in the
+  diff; don't read a clean result as safe for that overlay.
+- To find the blast radius of an external chart edit without a full diff, pass the
+  absolute path: `kdrift_affected(repo_path=".", changed_files=["/abs/chart-repo/charts/foo/values.yaml"])`.
 
 ### Comparing what a PR changed
 

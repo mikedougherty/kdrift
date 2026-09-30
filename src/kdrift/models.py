@@ -132,6 +132,22 @@ class DependencyEdge(pydantic.BaseModel):
     target: Path
 
 
+class ExternalChartRef(pydantic.BaseModel):
+    """A helm chart whose source lives outside the analyzed repository.
+
+    ``declaring_kust`` is the repo-relative directory of the kustomization that
+    declares the ``helmGlobals.chartHome`` + ``helmCharts`` (a base, when the
+    base declares them). ``chart_home_abs`` is the resolved absolute chart-home
+    directory the baseline render must be redirected away from (its live path)
+    toward a worktree of the owning repo at a baseline ref.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    declaring_kust: Path
+    chart_home_abs: Path
+
+
 class RenderResult(pydantic.BaseModel):
     """Result of a kustomize build for a single overlay."""
 

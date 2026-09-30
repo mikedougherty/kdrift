@@ -41,6 +41,7 @@ class _KustRefs:
 
     files: list[Path]
     subtrees: list[Path]
+    external_home: Path | None = None
 
 
 class DependencyGraph:
@@ -57,6 +58,7 @@ class DependencyGraph:
         self._file_to_overlays: dict[Path, set[Path]] = {}
         self._dir_to_overlays: dict[Path, set[Path]] = {}
         self._subtree_to_overlays: dict[Path, set[Path]] = {}
+        self._external_chart_refs: list[models.ExternalChartRef] = []
         self._overlay_dirs: set[Path] = set()
         self._parent_of: dict[Path, set[Path]] = {}
         self._leaf_overlays: list[models.Overlay] | None = None
@@ -92,6 +94,11 @@ class DependencyGraph:
 
             for subtree in refs.subtrees:
                 self._subtree_to_overlays.setdefault(subtree, set()).add(overlay_dir)
+
+            if refs.external_home is not None:
+                self._external_chart_refs.append(
+                    models.ExternalChartRef(declaring_kust=overlay_dir, chart_home_abs=refs.external_home)
+                )
 
         self._build_dir_index()
         self._built = True
@@ -226,6 +233,45 @@ class DependencyGraph:
                 result.update(overlays)
         return result
 
+    def external_chart_refs(self) -> list[models.ExternalChartRef]:
+        """External helm chart declarations (declaring kustomization + chart home).
+
+        Each entry is a kustomization whose ``helmGlobals.chartHome`` resolves to
+        an out-of-repo directory. The pipeline uses these to redirect the baseline
+        render at a worktree of the owning repo. See ``external_sources`` for the
+        chart directories used in change matching.
+        """
+        self._ensure_built()
+        return list(self._external_chart_refs)
+
+    def _referencing_closure(self, start: Path) -> set[Path]:
+        """All overlays that include ``start`` (itself + transitive referencers)."""
+        seen = {start}
+        stack = [start]
+        while stack:
+            cur = stack.pop()
+            for parent in self._parent_of.get(cur, ()):
+                if parent not in seen:
+                    seen.add(parent)
+                    stack.append(parent)
+        return seen
+
+    def external_refs_for(self, overlays: list[models.Overlay]) -> dict[Path, list[models.ExternalChartRef]]:
+        """Map each given overlay to the external chart refs it includes.
+
+        An overlay includes a ref when the ref's declaring kustomization is the
+        overlay itself or a base it composes. Matching is by ancestry (the
+        referencing closure of the declaring kustomization), not leaf resolution,
+        so a forced non-leaf overlay (``--overlay base``) still gets its refs.
+        """
+        self._ensure_built()
+        wanted = {o.path for o in overlays}
+        result: dict[Path, list[models.ExternalChartRef]] = {}
+        for ref in self._external_chart_refs:
+            for overlay in self._referencing_closure(ref.declaring_kust) & wanted:
+                result.setdefault(overlay, []).append(ref)
+        return result
+
     def external_sources(self, overlays: list[models.Overlay]) -> list[Path]:
         """Absolute out-of-repo source dirs the given leaf overlays depend on.
 
@@ -300,12 +346,12 @@ def _parse_references(kust_file: Path, repo_root: Path) -> _KustRefs:
     files.extend(_collect_string_list_refs(data, kust_dir))
     files.extend(_collect_patch_refs(data, kust_dir))
     files.extend(_collect_generator_refs(data, kust_dir))
-    values_files, subtrees = _collect_helm_refs(data, kust_dir, repo_root)
+    values_files, subtrees, external_home = _collect_helm_refs(data, kust_dir, repo_root)
     files.extend(values_files)
     files.extend(_collect_replacement_refs(data, kust_dir))
     files.extend(_collect_openapi_refs(data, kust_dir))
 
-    return _KustRefs(files=files, subtrees=subtrees)
+    return _KustRefs(files=files, subtrees=subtrees, external_home=external_home)
 
 
 def _collect_string_list_refs(data: dict[str, object], kust_dir: Path) -> list[Path]:
@@ -381,25 +427,31 @@ def _collect_generator_refs(data: dict[str, object], kust_dir: Path) -> list[Pat
 DEFAULT_CHART_HOME = "charts"
 
 
-def _collect_helm_refs(data: dict[str, object], kust_dir: Path, repo_root: Path) -> tuple[list[Path], list[Path]]:
-    """Collect helmCharts inputs: values files and the chart directories.
+def _collect_helm_refs(
+    data: dict[str, object], kust_dir: Path, repo_root: Path
+) -> tuple[list[Path], list[Path], Path | None]:
+    """Collect helmCharts inputs: values files, chart directories, external home.
 
-    Returns ``(values_files, chart_subtrees)``. Values files are ordinary
-    repo-relative file refs. Each chart directory (``<chartHome>/<name>``, with
-    ``chartHome`` defaulting to ``charts``) is returned as a subtree watch:
-    editing any file inside a local chart changes the rendered output. The chart
-    directory is resolved to its real path so a symlinked chart is followed; a
-    chart resolving inside the repo is returned repo-relative, one resolving
-    outside (an absolute ``chartHome`` or an escaping symlink) is returned
-    absolute.
+    Returns ``(values_files, chart_subtrees, external_home)``. Values files are
+    ordinary repo-relative file refs. Each chart directory (``<chartHome>/<name>``,
+    ``chartHome`` defaulting to ``charts``) is a subtree watch: editing any file
+    inside a local chart changes the rendered output. The chart directory is
+    resolved so a symlinked chart is followed; one resolving inside the repo is
+    returned repo-relative, one resolving outside (absolute ``chartHome``, an
+    escaping symlink, or a ``../`` escape) is returned absolute. ``external_home``
+    is the resolved absolute ``chartHome`` directory when it escapes the repo and
+    at least one named chart uses it (the directory the baseline render must be
+    redirected away from), else ``None``.
     """
     values_files: list[Path] = []
     subtrees: list[Path] = []
     helm_charts = data.get("helmCharts", [])
     if not isinstance(helm_charts, list):
-        return values_files, subtrees
+        return values_files, subtrees, None
 
     chart_home = _chart_home(data)
+    home_abs, is_external = _resolve_chart_home(repo_root, kust_dir, chart_home)
+    has_named_chart = False
 
     for chart in helm_charts:
         if not isinstance(chart, dict):
@@ -407,11 +459,13 @@ def _collect_helm_refs(data: dict[str, object], kust_dir: Path, repo_root: Path)
         values_files.extend(_collect_chart_values(chart, kust_dir))
         name = chart.get("name")
         if isinstance(name, str) and name:
+            has_named_chart = True
             subtree = _resolve_chart_dir(repo_root, kust_dir, chart_home, name)
             if subtree is not None:
                 subtrees.append(subtree)
 
-    return values_files, subtrees
+    external_home = home_abs if (is_external and has_named_chart) else None
+    return values_files, subtrees, external_home
 
 
 def _chart_home(data: dict[str, object]) -> str:
@@ -438,12 +492,40 @@ def _collect_chart_values(chart: dict[str, object], kust_dir: Path) -> list[Path
     return refs
 
 
+def _resolve_chart_home(repo_root: Path, kust_dir: Path, chart_home: str) -> tuple[Path | None, bool]:
+    """Resolve ``chartHome`` to ``(absolute_dir, is_external)``.
+
+    Returns ``(None, False)`` for a remote ``chartHome`` we do not track.
+    ``is_external`` is True when the resolved directory escapes the repo (an
+    absolute value, an escaping symlink, or a ``../`` escape).
+    """
+    if _is_remote_ref(chart_home):
+        return None, False
+
+    home = Path(chart_home)
+    raw = home if home.is_absolute() else repo_root / kust_dir / home
+
+    try:
+        real = raw.resolve()
+        repo_real = repo_root.resolve()
+    except OSError:
+        return None, False
+
+    try:
+        real.relative_to(repo_real)
+    except ValueError:
+        return real, True
+    return real, False
+
+
 def _resolve_chart_dir(repo_root: Path, kust_dir: Path, chart_home: str, name: str) -> Path | None:
     """Resolve a helm chart directory to a subtree-watch path.
 
-    Returns a repo-relative path when the chart resolves inside the repo, an
-    absolute path when it points outside (absolute ``chartHome`` or an escaping
-    symlink), or ``None`` for a remote ``chartHome`` we do not track.
+    Resolves the full ``<chartHome>/<name>`` path (following symlinks at any level,
+    including a symlinked individual chart under an in-repo chartHome). Returns a
+    repo-relative path when the chart resolves inside the repo, an absolute path
+    when it points outside (absolute ``chartHome``, an escaping symlink at either
+    level, or a ``../`` escape), or ``None`` for a remote ``chartHome``.
     """
     if _is_remote_ref(chart_home):
         return None

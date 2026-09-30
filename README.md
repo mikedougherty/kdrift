@@ -54,10 +54,14 @@ drift that reaches it through a shared base.
 ## How It Works
 
 1. `git diff --name-only HEAD` finds changed files
-2. Dependency graph maps changes to affected leaf overlays (parses all `kustomization.yaml` reference types)
+2. Dependency graph maps changes to affected leaf overlays (parses all `kustomization.yaml` reference types, including helm chart directories and the other local-file inputs that change a render)
 3. `kustomize build` renders baseline (via git worktree, cached) and candidate (working tree)
 4. Two-phase per-resource diff: exact GVK+namespace+name match, then generator-aware matching for hash-suffixed ConfigMap/Secret names
 5. Output as unified diff or structured JSON
+
+### Helm charts in another repo
+
+If an overlay's chart source lives in a separate local git checkout (an absolute `helmGlobals.chartHome`, an escaping symlink, or a `../` escape), kdrift renders the baseline against a worktree of that repo at its HEAD so drift in the external chart shows up too — baseline = your repo at `--ref` + each external repo at its HEAD, vs the working trees. A chart source that can't be pinned (non-git, read-only, or resolving back into your repo) is reported in `warnings` rather than silently treated as clean. See [`docs/design/multi-repo-diff.md`](docs/design/multi-repo-diff.md).
 
 ## Configuration
 

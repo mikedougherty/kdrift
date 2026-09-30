@@ -20,7 +20,10 @@ server = MCPServer(
         "Kustomize manifest drift detection. Use kdrift_diff to check how your "
         "kustomize changes affect rendered manifests. Use kdrift_discover to find "
         "leaf overlays in a repo. Use kdrift_affected to see which overlays are "
-        "impacted by specific file changes."
+        "impacted by specific file changes. kdrift also detects drift in helm "
+        "charts whose source lives in another local git checkout (out-of-repo "
+        "helmGlobals.chartHome); when such a source can't be pinned to a baseline "
+        "it is reported in the diff 'warnings' rather than silently ignored."
     ),
 )
 
@@ -39,7 +42,12 @@ server = MCPServer(
         "not hide base-driven drift. A path that matches no overlay, or selects an overlay "
         "with no drift, appears in 'warnings' rather than silently returning empty — do not "
         "read an empty 'overlays' with warnings as a clean 'no drift'. Use 'overlay' to "
-        "force-diff exactly one overlay even when nothing changed."
+        "force-diff exactly one overlay even when nothing changed.\n\n"
+        "Out-of-repo helm charts: if an overlay's helmGlobals.chartHome points at a chart in "
+        "another local git checkout, drift in that chart is detected too (baseline rendered "
+        "against the external repo at its HEAD). A source that can't be pinned (non-git, "
+        "read-only, or resolving back into the repo) is surfaced in 'warnings' and its drift "
+        "is not captured."
     ),
 )
 def kdrift_diff(
@@ -132,7 +140,9 @@ def kdrift_discover(repo_path: str, show_all: bool = False) -> str:
     name="kdrift_affected",
     description=(
         "Given a list of changed files, find which leaf overlays are affected. "
-        "Use this to understand the blast radius of a change before running a full diff."
+        "Use this to understand the blast radius of a change before running a full diff. "
+        "Accepts absolute paths, including files under an out-of-repo helm chart directory "
+        "(a chart whose source lives in another local checkout)."
     ),
 )
 def kdrift_affected(repo_path: str, changed_files: list[str]) -> str:

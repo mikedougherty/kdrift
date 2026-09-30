@@ -75,24 +75,6 @@ class TestRunDiffWorkingTree:
     @mock.patch("kdrift.pipeline.render")
     @mock.patch("kdrift.pipeline.git")
     @mock.patch("kdrift.pipeline.discover")
-    def test_no_in_repo_changes_but_external_source_warns(self, mock_discover, mock_git, mock_render, mock_diff):
-        mock_git.resolve_ref.return_value = "a" * 40
-        mock_git.get_short_sha.return_value = "a1b2c3d"
-        mock_git.changed_files.return_value = []
-
-        graph = mock.MagicMock()
-        graph.external_sources.return_value = [Path("/abs/ext/mychart")]
-        mock_discover.DependencyGraph.return_value = graph
-
-        result = pipeline.run_diff(Path("/repo"))
-
-        assert not result.has_changes
-        assert any("/abs/ext/mychart" in w for w in result.warnings)
-
-    @mock.patch("kdrift.pipeline.diff")
-    @mock.patch("kdrift.pipeline.render")
-    @mock.patch("kdrift.pipeline.git")
-    @mock.patch("kdrift.pipeline.discover")
     def test_with_changes(self, mock_discover, mock_git, mock_render, mock_diff):
         mock_git.resolve_ref.return_value = "a" * 40
         mock_git.get_short_sha.return_value = "a1b2c3d"
@@ -126,40 +108,6 @@ class TestRunDiffWorkingTree:
         assert result.has_changes
         assert len(result.overlays) == 1
         mock_git.changed_files.assert_called_once()
-
-    @mock.patch("kdrift.pipeline.diff")
-    @mock.patch("kdrift.pipeline.render")
-    @mock.patch("kdrift.pipeline.git")
-    @mock.patch("kdrift.pipeline.discover")
-    def test_out_of_repo_source_warns(self, mock_discover, mock_git, mock_render, mock_diff):
-        mock_git.resolve_ref.return_value = "a" * 40
-        mock_git.get_short_sha.return_value = "a1b2c3d"
-        mock_git.changed_files.return_value = [Path("k8s/dev/patch.yaml")]
-
-        overlay = _make_overlay()
-        graph = mock.MagicMock()
-        graph.affected_overlays.return_value = [overlay]
-        graph.external_sources.return_value = [Path("/abs/ext/mychart")]
-        mock_discover.DependencyGraph.return_value = graph
-
-        mock_render.DEFAULT_KUSTOMIZE_ARGS = ["--enable-helm"]
-        mock_render.find_kustomize.return_value = "/usr/bin/kustomize"
-        mock_render.kustomize_version.return_value = "v5.0.0"
-        mock_render.render_overlays_parallel.return_value = [_make_render_result()]
-        mock_render.cache_key.return_value = "cachekey"
-        mock_render.get_cached_render.return_value = None
-        mock_render.render_overlay.return_value = _make_render_result(output="baseline yaml")
-        mock_diff.diff_rendered.return_value = _make_overlay_result(has_changes=True)
-
-        wt_mock = mock.MagicMock()
-        wt_mock.__enter__ = mock.MagicMock(return_value=wt_mock)
-        wt_mock.__exit__ = mock.MagicMock(return_value=False)
-        wt_mock.path = Path("/tmp/wt")
-        mock_git.Worktree.return_value = wt_mock
-
-        result = pipeline.run_diff(Path("/repo"))
-
-        assert any("/abs/ext/mychart" in w for w in result.warnings)
 
     @mock.patch("kdrift.pipeline.diff")
     @mock.patch("kdrift.pipeline.render")

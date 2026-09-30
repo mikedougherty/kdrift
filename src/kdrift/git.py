@@ -26,6 +26,22 @@ def find_repo_root(start: Path | None = None) -> Path:
     return Path(result.strip())
 
 
+def find_repo_root_or_none(path: Path) -> Path | None:
+    """Find the git repo root containing ``path``, or None if it is not in one.
+
+    Used to classify an out-of-repo chart directory: an external chart may sit in
+    a non-git directory (or not exist yet), in which case it cannot be pinned to a
+    baseline ref.
+    """
+    if not path.exists():
+        return None
+    try:
+        result = _run_git(["rev-parse", "--show-toplevel"], cwd=path)
+    except GitError:
+        return None
+    return Path(result.strip())
+
+
 def resolve_ref(ref: str = "HEAD", repo_root: Path | None = None) -> str:
     """Resolve a git ref to its full SHA."""
     try:
