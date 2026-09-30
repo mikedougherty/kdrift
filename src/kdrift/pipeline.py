@@ -83,14 +83,15 @@ def run_diff(  # noqa: PLR0913
 
     warnings = _nonexistent_path_warnings(paths, repo_root) if paths else []
 
+    graph = discover.DependencyGraph(repo_root)
+    graph.build()
+
     if not changed:
         log.info("no_changes_detected", ref=short_ref, target_ref=short_target)
+        warnings.extend(_no_change_external_warnings(graph))
         return models.DiffResult(ref=short_ref, target_ref=short_target, warnings=warnings)
 
     log.debug("changed_files", count=len(changed), ref=short_ref, target_ref=short_target)
-
-    graph = discover.DependencyGraph(repo_root)
-    graph.build()
 
     if overlay_filter is not None:
         kust = discover._find_kustomization_in(repo_root / overlay_filter)
@@ -119,6 +120,14 @@ def run_diff(  # noqa: PLR0913
 
     log.info("affected_overlays", count=len(affected), overlays=[str(o.path) for o in affected])
 
+    external = graph.external_sources(affected)
+    if external:
+        sources = ", ".join(str(p) for p in external)
+        warnings.append(
+            f"affected overlays depend on out-of-repo chart source(s) not captured by this diff "
+            f"baseline (drift there is invisible until multi-repo diff lands): {sources}"
+        )
+
     ctx = _RenderContext(
         repo_root=repo_root,
         args=args,
@@ -143,6 +152,23 @@ def run_diff(  # noqa: PLR0913
         errors=errors,
         warnings=warnings,
     )
+
+
+def _no_change_external_warnings(graph: discover.DependencyGraph) -> list[str]:
+    """Warn when a no-change diff hides possible out-of-repo drift.
+
+    A clean "no changes" is misleading if any overlay depends on an out-of-repo
+    chart: git cannot see edits there, so drift in an external source produces
+    no in-repo change and would slip through silently.
+    """
+    external = graph.external_sources(graph.leaf_overlays)
+    if not external:
+        return []
+    sources = ", ".join(str(p) for p in external)
+    return [
+        f"no in-repo changes, but overlays depend on out-of-repo chart source(s) whose "
+        f"drift this diff cannot detect (correct cross-repo diff is planned): {sources}"
+    ]
 
 
 def _normalize_path(path: Path, repo_root: Path) -> Path:
