@@ -24,7 +24,7 @@ make typecheck   # Run mypy
 | Module | Purpose |
 |--------|---------|
 | `cli.py` | click entry point, --watch/--check/--format flags |
-| `discover.py` | Parse kustomization.yaml files, build reverse dependency DAG, find affected overlays |
+| `discover.py` | Parse kustomization.yaml files, build reverse dependency DAG, find affected overlays; tracks local-file pointers (resources/patches/generators/transformers/configurations/crds/openapi/helm values) plus helm chart-directory subtree watches |
 | `render.py` | Run kustomize build as subprocess, baseline caching, parallel rendering |
 | `diff.py` | Two-phase resource matching (exact GVK+ns+name, then generator-aware), unified diff |
 | `pipeline.py` | Shared discover->render->diff orchestration for all frontends |
@@ -41,6 +41,8 @@ make typecheck   # Run mypy
 - **Two-phase resource matching:** Phase 1 exact GVK+ns+name, Phase 2 generator-aware with kustomize hash charset (`bcdfghjklmnpqrstvwxz2456789`)
 - **Baseline caching:** keyed by ref+overlay+kustomize-args+version, stored in `~/.cache/kdrift/`
 - **Read-only git operations only:** worktrees for baseline rendering (separate index, no locks)
+- **Helm chart directories are subtree watches:** `<helmGlobals.chartHome>/<name>` (chartHome defaults to `charts`) is monitored recursively — any file under a local chart affects the overlay. The path is `.resolve()`d so a symlinked chart is followed; a chart resolving inside the repo is tracked repo-relative, one resolving outside (absolute `chartHome` or an escaping symlink) is tracked absolute and flagged as an external source.
+- **Out-of-repo sources: monitored, not yet diffable.** `affected`/`discover` map changes under an absolute out-of-repo chart to consuming overlays (pass the absolute path to `kdrift_affected`). `diff` cannot capture drift there — the detached baseline worktree contains only `repo_root`, so both sides render the same live external chart — so it emits a warning instead. Correct cross-repo diff (per-repo HEAD-vs-working baseline via a worktree per involved repo) is the planned next step.
 
 ## Conventions
 
