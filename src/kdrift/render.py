@@ -11,6 +11,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -157,17 +158,26 @@ def render_overlays_parallel(  # noqa: PLR0913
     return [results[o.path] for o in overlays]
 
 
-def cache_key(
+def cache_key(  # noqa: PLR0913
     ref: str,
     overlay_path: Path,
     kustomize_args: list[str],
     kustomize_ver: str,
     env: dict[str, str] | None = None,
+    external: list[str] | None = None,
 ) -> str:
-    """Compute a cache key for a baseline render."""
+    """Compute a cache key for a baseline render.
+
+    ``external`` is a list of ``<repo_root>@<sha>`` for out-of-repo chart repos
+    the overlay depends on; it is guarded like ``env`` so an empty/absent set
+    yields a byte-identical key to a single-repo render (no cache invalidation on
+    upgrade for repos without external charts).
+    """
     parts = [ref, str(overlay_path), kustomize_ver, *kustomize_args]
     if env:
         parts.extend(f"{k}={v}" for k, v in sorted(env.items()))
+    if external:
+        parts.extend(f"ext:{e}" for e in sorted(external))
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
@@ -188,6 +198,17 @@ def get_cached_render(key: str) -> str | None:
 
 
 def set_cached_render(key: str, content: str) -> None:
-    """Cache a baseline render."""
-    path = cache_dir() / f"{key}.yaml"
-    path.write_text(content)
+    """Cache a baseline render atomically.
+
+    Writes to a unique temp file in the cache dir and renames it into place, so a
+    concurrent reader (CLI + LSP + MCP can run against the same cache) never sees
+    a partially written baseline.
+    """
+    directory = cache_dir()
+    path = directory / f"{key}.yaml"
+    tmp = directory / f".{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    try:
+        tmp.write_text(content)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)

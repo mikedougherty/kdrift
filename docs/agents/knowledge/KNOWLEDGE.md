@@ -14,6 +14,10 @@ Kustomize manifest drift detection. Shows exactly what your kustomize edits will
 
 **Two-ref comparison**: Compare any two git refs (`--ref main~5..main~2`) instead of working tree vs HEAD. Uses two temporary worktrees.
 
+**Tracked inputs**: Beyond resources and patches, kdrift follows every local file that changes a render — `generators`, `transformers`, `configurations`, `crds`, `openapi.path`, configMap/secretGenerator files, helm `valuesFile`/`additionalValuesFiles`, and helm **chart directories** (`<helmGlobals.chartHome>/<name>`, chartHome default `charts/`) as recursive subtree watches. Editing any file inside a local chart marks the consuming overlay affected.
+
+**Out-of-repo helm charts**: When a chart's source lives in another local git checkout — an absolute `helmGlobals.chartHome`, an escaping symlink, or a `../` escape — kdrift maps edits there to consuming overlays and, for `diff`, renders the baseline against a worktree of that external repo at its HEAD (with `chartHome` redirected to the worktree) so drift in the external chart is visible. Baseline semantic: per-repo HEAD-vs-working (your repo at `--ref`, each external repo at its own HEAD, both vs working trees). Sources that cannot be pinned (non-git directory, read-only `.git`, or resolving back into your repo) degrade to a warning instead of a misleading clean result, and are never cached. Git-submodule chart sources are not yet handled.
+
 ## Delivery Surfaces
 
 | Surface | Invocation | Best for |
@@ -91,9 +95,9 @@ Add `--debug` to enable file logging to `~/.cache/kdrift/kdrift.log`.
 
 | Tool | Description |
 |------|-------------|
-| `kdrift_diff` | Diff overlays against a baseline ref. Returns per-overlay, per-resource structured JSON plus a `warnings` list. Supports `target_ref` for two-ref comparison. `paths` narrows the reported overlays (by overlay dir, file within, or upstream base) against the full affected set — transitive base drift is preserved, and unmatched/drift-free paths surface as warnings, not a silent empty. `overlay` force-diffs exactly one overlay. |
+| `kdrift_diff` | Diff overlays against a baseline ref. Returns per-overlay, per-resource structured JSON plus a `warnings` list. Supports `target_ref` for two-ref comparison. `paths` narrows the reported overlays (by overlay dir, file within, or upstream base) against the full affected set — transitive base drift is preserved, and unmatched/drift-free paths surface as warnings, not a silent empty. `overlay` force-diffs exactly one overlay. Detects drift in out-of-repo helm charts (chart source in another local git checkout) and warns when such a source can't be pinned to a baseline. |
 | `kdrift_discover` | Find leaf overlays. Defaults to git-changed overlays; `show_all=true` for the full list. |
-| `kdrift_affected` | Given a list of changed files, find which overlays are affected. |
+| `kdrift_affected` | Given a list of changed files, find which overlays are affected. Accepts absolute paths, including files under an out-of-repo chart directory. |
 | `kdrift_render` | Render a single overlay to YAML. |
 
 ## Output Structure
@@ -142,7 +146,7 @@ Baseline build failures (the ref version was already broken) are reported as `"b
 
 ## Caching
 
-Baseline renders are cached at `~/.cache/kdrift/` keyed by ref SHA + overlay path + kustomize version + args. Working tree renders are never cached.
+Baseline renders are cached at `~/.cache/kdrift/` keyed by ref SHA + overlay path + kustomize version + args (plus each external chart repo's HEAD when the overlay uses out-of-repo charts). Working tree renders are never cached, nor is any baseline that read an un-pinnable external source live. Cache writes are atomic (temp file + rename), so concurrent CLI/LSP/MCP runs never see a partial baseline.
 
 ## Prerequisites
 
