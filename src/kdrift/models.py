@@ -146,6 +146,7 @@ class ExternalChartRef(pydantic.BaseModel):
 
     declaring_kust: Path
     chart_home_abs: Path
+    chart_names: tuple[str, ...] = ()
 
 
 class RenderResult(pydantic.BaseModel):

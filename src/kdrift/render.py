@@ -56,6 +56,20 @@ def kustomize_version(binary: str | None = None) -> str:
     return result.stdout.strip()
 
 
+def helm_version(binary: str = "helm") -> str:
+    """Get the helm version string (for cache keying when helm resolves deps)."""
+    try:
+        result = subprocess.run(
+            [binary, "version", "--short"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+    return result.stdout.strip()
+
+
 def render_overlay(
     overlay_path: Path,
     build_dir: Path,
@@ -165,19 +179,23 @@ def cache_key(  # noqa: PLR0913
     kustomize_ver: str,
     env: dict[str, str] | None = None,
     external: list[str] | None = None,
+    helm_ver: str | None = None,
 ) -> str:
     """Compute a cache key for a baseline render.
 
     ``external`` is a list of ``<repo_root>@<sha>`` for out-of-repo chart repos
-    the overlay depends on; it is guarded like ``env`` so an empty/absent set
-    yields a byte-identical key to a single-repo render (no cache invalidation on
-    upgrade for repos without external charts).
+    the overlay depends on. ``helm_ver`` pins the helm version when helm resolves
+    the overlay's out-of-repo chart dependencies into the baseline. Both are
+    guarded like ``env`` so an empty/absent set yields a byte-identical key to a
+    single-repo render (no cache invalidation for repos without external charts).
     """
     parts = [ref, str(overlay_path), kustomize_ver, *kustomize_args]
     if env:
         parts.extend(f"{k}={v}" for k, v in sorted(env.items()))
     if external:
         parts.extend(f"ext:{e}" for e in sorted(external))
+    if helm_ver:
+        parts.append(f"helm:{helm_ver}")
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
