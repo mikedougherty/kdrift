@@ -369,7 +369,8 @@ class TestRenderWithCache:
         ctx = _make_render_ctx()
         result = pipeline._render_with_cache(overlay, Path("/wt"), ctx, "abc123")
 
-        assert result == "cached yaml"
+        assert result.success
+        assert result.output == "cached yaml"
         mock_render.render_overlay.assert_not_called()
 
     @mock.patch("kdrift.pipeline.render")
@@ -382,11 +383,12 @@ class TestRenderWithCache:
         ctx = _make_render_ctx()
         result = pipeline._render_with_cache(overlay, Path("/wt"), ctx, "abc123")
 
-        assert result == "fresh yaml"
+        assert result.success
+        assert result.output == "fresh yaml"
         mock_render.set_cached_render.assert_called_once_with("key", "fresh yaml")
 
     @mock.patch("kdrift.pipeline.render")
-    def test_returns_none_on_failure(self, mock_render):
+    def test_returns_failure_result(self, mock_render):
         mock_render.cache_key.return_value = "key"
         mock_render.get_cached_render.return_value = None
         mock_render.render_overlay.return_value = _make_render_result(success=False)
@@ -395,4 +397,48 @@ class TestRenderWithCache:
         ctx = _make_render_ctx()
         result = pipeline._render_with_cache(overlay, Path("/wt"), ctx, "abc123")
 
-        assert result is None
+        assert not result.success
+        mock_render.set_cached_render.assert_not_called()
+
+
+@pytest.mark.unit
+class TestBaselineFailureError:
+    """Test the baseline-failure message composition."""
+
+    def _plan(self, **kwargs) -> pipeline._ExternalPlan:
+        return pipeline._ExternalPlan(pinnable={}, unpinnable={}, repos={}, **kwargs)
+
+    def test_pre_existing_includes_stderr(self):
+        overlay = _make_overlay()
+        result = models.RenderResult(overlay_path=overlay.path, error="Error: accumulating resources", exit_code=1)
+
+        msg = pipeline._baseline_failure_error(result, overlay, self._plan(), {})
+
+        assert msg == "baseline build failed (pre-existing): Error: accumulating resources"
+
+    def test_pre_existing_without_stderr(self):
+        overlay = _make_overlay()
+        result = models.RenderResult(overlay_path=overlay.path, error="", exit_code=1)
+
+        msg = pipeline._baseline_failure_error(result, overlay, self._plan(), {})
+
+        assert msg == "baseline build failed (pre-existing)"
+
+    def test_unresolved_dep_names_chart_and_stderr(self):
+        overlay = _make_overlay()
+        ref = models.ExternalChartRef(
+            declaring_kust=Path("k8s/base"),
+            chart_home_abs=Path("/other/charts"),
+            chart_names=("app",),
+        )
+        plan = self._plan(deps_unresolved={Path("k8s/base"): ("app",)})
+        result = models.RenderResult(
+            overlay_path=overlay.path,
+            error="missing in charts/ directory: postgresql",
+            exit_code=1,
+        )
+
+        msg = pipeline._baseline_failure_error(result, overlay, plan, {overlay.path: [ref]})
+
+        assert "helm deps unresolved in baseline worktree for chart(s) app" in msg
+        assert "missing in charts/ directory: postgresql" in msg

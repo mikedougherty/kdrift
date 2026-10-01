@@ -263,6 +263,18 @@ class TestHelmDepResolution:
         pipeline._resolve_external_deps(plan, {b_root: wt}, ["--enable-helm"], None)
         assert Path("app") in plan.deps_from_worktree
 
+    def test_resolve_external_deps_records_unresolved(self, tmp_path, monkeypatch):
+        wt = tmp_path / "bwt"
+        self._chart(wt / "charts" / "mychart", deps=True)
+        # no live deps to copy -> helm build fails and the copy fallback fails -> unresolved
+        monkeypatch.setattr(pipeline, "_helm_dep_build", lambda *a, **k: False)
+        b_root = tmp_path / "live"
+        dep = pipeline._ExternalDep(Path("app"), b_root, "sha", Path("charts"), ("mychart",))
+        plan = pipeline._ExternalPlan(pinnable={Path("app"): dep}, unpinnable={}, repos={b_root: "sha"})
+        pipeline._resolve_external_deps(plan, {b_root: wt}, ["--enable-helm"], None)
+        assert plan.deps_unresolved.get(Path("app")) == ("mychart",)
+        assert Path("app") not in plan.deps_from_worktree
+
     def test_deps_from_worktree_is_noncacheable_and_warns(self):
         overlay = models.Overlay(path=Path("app"), kustomization_file=Path("app/kustomization.yaml"))
         ref = models.ExternalChartRef(declaring_kust=Path("base"), chart_home_abs=Path("/ext/charts"))
