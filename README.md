@@ -31,6 +31,8 @@ kdrift diff -C /path/to/repo            # target a different repository
 kdrift diff --format json               # structured JSON output
 kdrift diff --check                     # exit non-zero if drift exists (CI/pre-commit)
 kdrift diff --watch                     # continuous mode: re-diff on file save
+kdrift --version                        # print the installed version
+kdrift version                          # same, as a subcommand
 ```
 
 ### Scoping with PATHS
