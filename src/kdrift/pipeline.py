@@ -9,6 +9,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import os.path
+import shutil
+import subprocess
 from pathlib import Path
 
 import structlog
@@ -28,6 +30,7 @@ class _RenderContext:
     binary: str
     kust_ver: str
     env: dict[str, str] | None = None
+    helm_ver: str | None = None  # set when external charts may be helm-resolved
 
 
 @dataclasses.dataclass(frozen=True)
@@ -38,15 +41,24 @@ class _ExternalDep:
     b_root: Path
     b_head: str
     rel: Path  # chart_home_abs relative to b_root
+    chart_names: tuple[str, ...]  # referenced charts under this chartHome
 
 
 @dataclasses.dataclass
 class _ExternalPlan:
-    """Per-run resolution of out-of-repo chart sources into pinnable / not."""
+    """Per-run resolution of out-of-repo chart sources into pinnable / not.
+
+    Three baseline states per declaring kustomization: pinnable + not in
+    ``deps_from_worktree`` = ref-resolved (cacheable); pinnable + in
+    ``deps_from_worktree`` = resolved from the working tree (diffed, NOT cached,
+    distinct warning); ``unpinnable`` = not diffed at all. ``deps_from_worktree``
+    is populated during the diff by the dependency-resolution step.
+    """
 
     pinnable: dict[Path, _ExternalDep]  # declaring_kust -> dep
     unpinnable: dict[Path, str]  # declaring_kust -> reason
     repos: dict[Path, str]  # external repo root -> HEAD sha (dedup)
+    deps_from_worktree: set[Path] = dataclasses.field(default_factory=set)  # declaring_kusts
 
     @property
     def active(self) -> bool:
@@ -68,6 +80,7 @@ def _build_external_plan(graph: discover.DependencyGraph, repo_root: Path) -> _E
 
     for ref in graph.external_chart_refs():
         home = ref.chart_home_abs
+        chart_names = ref.chart_names
         b_root = git.find_repo_root_or_none(home)
         if b_root is None:
             unpinnable.setdefault(ref.declaring_kust, "chart source is not in a git repository")
@@ -95,7 +108,7 @@ def _build_external_plan(graph: discover.DependencyGraph, repo_root: Path) -> _E
             unpinnable.setdefault(ref.declaring_kust, "chart repo is read-only (cannot create a worktree)")
             continue
         repos[b_root] = b_head
-        pinnable[ref.declaring_kust] = _ExternalDep(ref.declaring_kust, b_root, b_head, rel)
+        pinnable[ref.declaring_kust] = _ExternalDep(ref.declaring_kust, b_root, b_head, rel, chart_names)
 
     return _ExternalPlan(pinnable=pinnable, unpinnable=unpinnable, repos=repos)
 
@@ -120,6 +133,188 @@ def _external_cache_key(refs: list[models.ExternalChartRef], plan: _ExternalPlan
         if dep is not None:
             entries.add(f"{dep.b_root}@{dep.b_head}")
     return sorted(entries)
+
+
+# `helm dependency build` can hit the network; bound it so --watch/LSP never hang.
+HELM_DEP_BUILD_TIMEOUT = 120  # seconds
+
+
+def _helm_binary(kustomize_args: list[str]) -> str:
+    """The helm binary kustomize uses (--helm-command), defaulting to 'helm'."""
+    for i, arg in enumerate(kustomize_args):
+        if arg == "--helm-command" and i + 1 < len(kustomize_args):
+            return kustomize_args[i + 1]
+        if arg.startswith("--helm-command="):
+            return arg.split("=", 1)[1]
+    return "helm"
+
+
+def _within(path: Path, outer_real: Path) -> bool:
+    """True if ``path`` resolves to a location inside ``outer_real``.
+
+    Confinement guard: a chart dir, or a write target inside it, that resolves
+    outside the worktree is an escaping symlink — writing there would mutate the
+    live checkout, so the caller must skip it. ``Path.resolve()`` (non-strict)
+    follows every symlink and still resolves a genuinely-absent non-symlink path to
+    its in-worktree location, so it rejects an escaping symlink (including a
+    *dangling* one) while admitting a not-yet-created dir. (Do NOT walk up to the
+    nearest existing ancestor — that ascends past a broken escaping symlink and
+    wrongly admits it, which lets the fallback copy write outside the worktree.)
+    """
+    try:
+        path.resolve().relative_to(outer_real)
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def _parse_deps(f: Path) -> list[tuple[str, str]] | None:
+    """Parse a chart's dependency (name, version) pairs from Chart.yaml/Chart.lock.
+
+    Returns None if the file is absent/unreadable, [] if it has no dependencies.
+    """
+    if not f.is_file():
+        return None
+    try:
+        data = yaml.safe_load(f.read_text()) or {}
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    deps = data.get("dependencies")
+    if not isinstance(deps, list):
+        return []
+    out: list[tuple[str, str]] = []
+    for d in deps:
+        if isinstance(d, dict) and isinstance(d.get("name"), str) and d["name"]:
+            out.append((d["name"], str(d.get("version", ""))))
+    return out
+
+
+def _deps_complete(chart_dir: Path, required: list[tuple[str, str]]) -> bool:
+    """True if every required dependency has a matching tarball/dir under charts/.
+
+    Matches the declared/pinned deps against present artifacts rather than testing
+    that charts/ is merely non-empty, so a partially-vendored charts/ is treated as
+    incomplete.
+    """
+    charts = chart_dir / "charts"
+    for name, ver in required:
+        if (charts / f"{name}-{ver}.tgz").exists() or (charts / name).is_dir():
+            continue
+        return False
+    return True
+
+
+def _helm_dep_build(chart_dir: Path, binary: str, env: dict[str, str] | None, timeout: int) -> bool:
+    """Run `helm dependency build` in ``chart_dir``; True on success."""
+    subprocess_env = {**os.environ, **env} if env else None
+    try:
+        result = subprocess.run(
+            [binary, "dependency", "build", str(chart_dir)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=subprocess_env,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    if result.returncode != 0:
+        log.debug("helm_dependency_build_failed", chart=str(chart_dir), stderr=result.stderr.strip())
+    return result.returncode == 0
+
+
+def _copy_live_deps(live_chart_dir: Path, chart_dir: Path) -> bool:
+    """Copy resolved charts/ (+ Chart.lock) from the live checkout into the worktree chart.
+
+    Cleans any partial charts//tmpcharts/ a failed build left behind first. Only
+    called for a chart dir already confirmed inside the worktree (never through an
+    escaping symlink). Returns True if live deps were present and copied.
+    """
+    live_charts = live_chart_dir / "charts"
+    if not live_charts.is_dir():
+        return False
+    try:
+        shutil.rmtree(chart_dir / "charts", ignore_errors=True)
+        shutil.rmtree(chart_dir / "tmpcharts", ignore_errors=True)
+        shutil.copytree(live_charts, chart_dir / "charts", dirs_exist_ok=True)
+        live_lock = live_chart_dir / "Chart.lock"
+        if live_lock.is_file():
+            shutil.copy2(live_lock, chart_dir / "Chart.lock")
+    except OSError as e:
+        # One unreadable file / a surviving escaping symlink must degrade this chart
+        # to "unresolved", not crash the whole diff.
+        log.warning("copy_live_deps_failed", chart=str(chart_dir), error=str(e))
+        return False
+    return True
+
+
+def _resolve_one_chart(  # noqa: PLR0911
+    chart_dir: Path,
+    live_chart_dir: Path,
+    worktree_real: Path,
+    binary: str,
+    env: dict[str, str] | None,
+) -> str:
+    """Ensure one chart's deps are present in the baseline worktree.
+
+    Returns: 'ok' (ref-resolved or nothing to do), 'fallback' (deps copied from
+    the working tree — baseline must not be cached), 'skip' (escaping symlink or
+    no chart at the ref — never written through), or 'unresolved' (deps needed but
+    neither build nor copy worked — baseline will fail).
+    """
+    # Confinement: the chart dir and its write targets must resolve inside the worktree.
+    if not _within(chart_dir, worktree_real):
+        return "skip"
+    if not _within(chart_dir / "charts", worktree_real) or not _within(chart_dir / "Chart.lock", worktree_real):
+        return "skip"
+    if not (chart_dir / "Chart.yaml").is_file():
+        return "skip"
+
+    yaml_deps = _parse_deps(chart_dir / "Chart.yaml")
+    if not yaml_deps:
+        return "ok"  # no declared dependencies
+    lock_deps = _parse_deps(chart_dir / "Chart.lock")
+    required = lock_deps or yaml_deps  # prefer Chart.lock's pinned versions; empty/absent -> Chart.yaml
+    if _deps_complete(chart_dir, required):
+        return "ok"
+    if _helm_dep_build(chart_dir, binary, env, HELM_DEP_BUILD_TIMEOUT):
+        return "ok"
+    if _copy_live_deps(live_chart_dir, chart_dir):
+        return "fallback"
+    return "unresolved"
+
+
+def _resolve_external_deps(
+    plan: _ExternalPlan,
+    b_worktrees: dict[Path, Path],
+    kustomize_args: list[str],
+    env: dict[str, str] | None,
+) -> None:
+    """Resolve helm deps for each pinnable external chart in its B worktree.
+
+    Runs once per B worktree (shared across ref-vs-ref's two A-rewrites). Records
+    declaring kustomizations whose deps were copied from the working tree in
+    ``plan.deps_from_worktree`` — their baseline is diffed but not cached and gets
+    a distinct warning. Must run after rewrite/demotion and before the render loop.
+    """
+    binary = _helm_binary(kustomize_args)
+    for declaring_kust, dep in plan.pinnable.items():
+        wt = b_worktrees.get(dep.b_root)
+        if wt is None:
+            continue
+        worktree_real = wt.resolve()
+        for name in dep.chart_names:
+            status = _resolve_one_chart(
+                wt / dep.rel / name,
+                dep.b_root / dep.rel / name,
+                worktree_real,
+                binary,
+                env,
+            )
+            if status == "fallback":
+                plan.deps_from_worktree.add(declaring_kust)
 
 
 def _rewrite_chart_homes(
@@ -289,6 +484,9 @@ def run_diff(  # noqa: PLR0913
         binary=render.find_kustomize(),
         kust_ver=render.kustomize_version(),
         env=kustomize_env,
+        # helm resolves out-of-repo chart deps into the baseline, so a helm upgrade
+        # must invalidate those cached baselines; only computed when external.
+        helm_ver=render.helm_version(_helm_binary(args)) if plan.active else None,
     )
 
     overlay_results: list[models.OverlayResult] = []
@@ -300,10 +498,12 @@ def run_diff(  # noqa: PLR0913
     else:
         _diff_working_tree_vs_ref(affected, ctx, resolved_ref, overlay_results, plan, ext_by_leaf)
 
-    # Emit un-pinnable warnings AFTER the diff: the render step may demote a
-    # pinnable source at runtime (worktree-add failure, or a baseline chartHome
-    # that could not be rewritten), and plan.unpinnable now reflects those too.
+    # Emit these warnings AFTER the diff: the render step mutates the plan at
+    # runtime — demoting a pinnable source (worktree-add failure or un-rewritable
+    # chartHome) into unpinnable, and recording charts whose deps were resolved
+    # from the working tree — so both sets are final only here.
     warnings.extend(_unpinnable_warnings(affected, ext_by_leaf, plan))
+    warnings.extend(_worktree_deps_warnings(affected, ext_by_leaf, plan))
 
     return models.DiffResult(
         ref=short_ref,
@@ -329,6 +529,33 @@ def _unpinnable_warnings(
         ]
         if reasons:
             msgs.append(f"overlay '{overlay.path}': out-of-repo chart drift not captured — {'; '.join(reasons)}")
+    return msgs
+
+
+def _worktree_deps_warnings(
+    affected: list[models.Overlay],
+    ext_by_leaf: dict[Path, list[models.ExternalChartRef]],
+    plan: _ExternalPlan,
+) -> list[str]:
+    """Warn per overlay whose baseline helm deps were resolved from the working tree.
+
+    Distinct from the un-pinnable warning: the overlay WAS diffed (deps copied from
+    the live checkout), but against working-tree deps rather than the baseline ref,
+    so dependency-version drift is not captured and the baseline is not cached.
+    """
+    msgs: list[str] = []
+    for overlay in affected:
+        sources = [
+            str(ref.chart_home_abs)
+            for ref in ext_by_leaf.get(overlay.path, [])
+            if ref.declaring_kust in plan.deps_from_worktree
+        ]
+        if sources:
+            msgs.append(
+                f"overlay '{overlay.path}': baseline helm dependencies resolved from the working tree, "
+                f"not the baseline ref (registry unreachable?); dependency-version drift is not "
+                f"captured — {', '.join(sources)}"
+            )
     return msgs
 
 
@@ -471,12 +698,15 @@ def _overlay_external(
 ) -> tuple[list[str], bool]:
     """(external cache-key entries, cacheable) for one overlay.
 
-    Not cacheable when the overlay has any un-pinnable external ref: its baseline
-    read a live external dir whose state cannot be keyed, so caching it would
-    fabricate drift on the next run.
+    Not cacheable when the overlay has any un-pinnable external ref (baseline not
+    diffed) OR any ref whose deps were resolved from the working tree
+    (``deps_from_worktree``): both read live external state that cannot be keyed,
+    so caching would fabricate drift on a later run.
     """
     refs = ext_by_leaf.get(overlay.path, [])
-    cacheable = not any(r.declaring_kust in plan.unpinnable for r in refs)
+    cacheable = not any(
+        r.declaring_kust in plan.unpinnable or r.declaring_kust in plan.deps_from_worktree for r in refs
+    )
     return _external_cache_key(refs, plan), cacheable
 
 
@@ -502,6 +732,7 @@ def _diff_working_tree_vs_ref(  # noqa: PLR0913
         b_worktrees = _open_external_worktrees(stack, plan)
         if b_worktrees:
             _demote_unrewritten(plan, _rewrite_chart_homes(wt.path, plan, b_worktrees))
+            _resolve_external_deps(plan, b_worktrees, ctx.args, ctx.env)
 
         for overlay, cand_result in zip(affected, candidate_results, strict=True):
             if not cand_result.success:
@@ -547,6 +778,7 @@ def _diff_ref_vs_ref(  # noqa: PLR0913
                 target_wt.path, plan, b_worktrees
             )
             _demote_unrewritten(plan, rewritten)
+            _resolve_external_deps(plan, b_worktrees, ctx.args, ctx.env)
 
         for overlay in affected:
             ext_key, cacheable = _overlay_external(overlay, ext_by_leaf, plan)
@@ -572,7 +804,15 @@ def _diff_ref_vs_ref(  # noqa: PLR0913
 
             target_output = target_result.output
             if cacheable:
-                key = render.cache_key(resolved_target, overlay.path, ctx.args, ctx.kust_ver, ctx.env, ext_key or None)
+                key = render.cache_key(
+                    resolved_target,
+                    overlay.path,
+                    ctx.args,
+                    ctx.kust_ver,
+                    ctx.env,
+                    ext_key or None,
+                    helm_ver=ctx.helm_ver if ext_key else None,
+                )
                 render.set_cached_render(key, target_output)
 
             overlay_results.append(diff.diff_rendered(baseline_output, target_output, overlay.path))
@@ -592,7 +832,15 @@ def _render_with_cache(  # noqa: PLR0913
     baseline read a live external dir whose state is not in the key, so it must
     be neither served from nor written to the cache.
     """
-    key = render.cache_key(resolved_ref, overlay.path, ctx.args, ctx.kust_ver, ctx.env, external or None)
+    key = render.cache_key(
+        resolved_ref,
+        overlay.path,
+        ctx.args,
+        ctx.kust_ver,
+        ctx.env,
+        external or None,
+        helm_ver=ctx.helm_ver if external else None,
+    )
     if cacheable:
         cached = render.get_cached_render(key)
         if cached is not None:

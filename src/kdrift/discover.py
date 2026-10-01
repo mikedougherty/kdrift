@@ -42,6 +42,7 @@ class _KustRefs:
     files: list[Path]
     subtrees: list[Path]
     external_home: Path | None = None
+    external_chart_names: tuple[str, ...] = ()
 
 
 class DependencyGraph:
@@ -97,7 +98,11 @@ class DependencyGraph:
 
             if refs.external_home is not None:
                 self._external_chart_refs.append(
-                    models.ExternalChartRef(declaring_kust=overlay_dir, chart_home_abs=refs.external_home)
+                    models.ExternalChartRef(
+                        declaring_kust=overlay_dir,
+                        chart_home_abs=refs.external_home,
+                        chart_names=refs.external_chart_names,
+                    )
                 )
 
         self._build_dir_index()
@@ -346,12 +351,17 @@ def _parse_references(kust_file: Path, repo_root: Path) -> _KustRefs:
     files.extend(_collect_string_list_refs(data, kust_dir))
     files.extend(_collect_patch_refs(data, kust_dir))
     files.extend(_collect_generator_refs(data, kust_dir))
-    values_files, subtrees, external_home = _collect_helm_refs(data, kust_dir, repo_root)
+    values_files, subtrees, external_home, external_chart_names = _collect_helm_refs(data, kust_dir, repo_root)
     files.extend(values_files)
     files.extend(_collect_replacement_refs(data, kust_dir))
     files.extend(_collect_openapi_refs(data, kust_dir))
 
-    return _KustRefs(files=files, subtrees=subtrees, external_home=external_home)
+    return _KustRefs(
+        files=files,
+        subtrees=subtrees,
+        external_home=external_home,
+        external_chart_names=external_chart_names,
+    )
 
 
 def _collect_string_list_refs(data: dict[str, object], kust_dir: Path) -> list[Path]:
@@ -429,29 +439,32 @@ DEFAULT_CHART_HOME = "charts"
 
 def _collect_helm_refs(
     data: dict[str, object], kust_dir: Path, repo_root: Path
-) -> tuple[list[Path], list[Path], Path | None]:
+) -> tuple[list[Path], list[Path], Path | None, tuple[str, ...]]:
     """Collect helmCharts inputs: values files, chart directories, external home.
 
-    Returns ``(values_files, chart_subtrees, external_home)``. Values files are
-    ordinary repo-relative file refs. Each chart directory (``<chartHome>/<name>``,
-    ``chartHome`` defaulting to ``charts``) is a subtree watch: editing any file
-    inside a local chart changes the rendered output. The chart directory is
-    resolved so a symlinked chart is followed; one resolving inside the repo is
-    returned repo-relative, one resolving outside (absolute ``chartHome``, an
-    escaping symlink, or a ``../`` escape) is returned absolute. ``external_home``
-    is the resolved absolute ``chartHome`` directory when it escapes the repo and
-    at least one named chart uses it (the directory the baseline render must be
-    redirected away from), else ``None``.
+    Returns ``(values_files, chart_subtrees, external_home, external_chart_names)``.
+    Values files are ordinary repo-relative file refs. Each chart directory
+    (``<chartHome>/<name>``, ``chartHome`` defaulting to ``charts``) is a subtree
+    watch: editing any file inside a local chart changes the rendered output. The
+    chart directory is resolved so a symlinked chart is followed; one resolving
+    inside the repo is returned repo-relative, one resolving outside (absolute
+    ``chartHome``, an escaping symlink, or a ``../`` escape) is returned absolute.
+    ``external_home`` is the resolved absolute ``chartHome`` directory when it
+    escapes the repo and at least one named chart uses it (the directory the
+    baseline render must be redirected away from), else ``None``.
+    ``external_chart_names`` are the named charts under that external home (empty
+    when ``external_home`` is ``None``), so the baseline render can resolve helm
+    dependencies for exactly those charts.
     """
     values_files: list[Path] = []
     subtrees: list[Path] = []
+    names: list[str] = []
     helm_charts = data.get("helmCharts", [])
     if not isinstance(helm_charts, list):
-        return values_files, subtrees, None
+        return values_files, subtrees, None, ()
 
     chart_home = _chart_home(data)
     home_abs, is_external = _resolve_chart_home(repo_root, kust_dir, chart_home)
-    has_named_chart = False
 
     for chart in helm_charts:
         if not isinstance(chart, dict):
@@ -459,13 +472,14 @@ def _collect_helm_refs(
         values_files.extend(_collect_chart_values(chart, kust_dir))
         name = chart.get("name")
         if isinstance(name, str) and name:
-            has_named_chart = True
+            names.append(name)
             subtree = _resolve_chart_dir(repo_root, kust_dir, chart_home, name)
             if subtree is not None:
                 subtrees.append(subtree)
 
-    external_home = home_abs if (is_external and has_named_chart) else None
-    return values_files, subtrees, external_home
+    if is_external and names:
+        return values_files, subtrees, home_abs, tuple(names)
+    return values_files, subtrees, None, ()
 
 
 def _chart_home(data: dict[str, object]) -> str:

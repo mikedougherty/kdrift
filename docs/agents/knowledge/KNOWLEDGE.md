@@ -18,6 +18,8 @@ Kustomize manifest drift detection. Shows exactly what your kustomize edits will
 
 **Out-of-repo helm charts**: When a chart's source lives in another local git checkout — an absolute `helmGlobals.chartHome`, an escaping symlink, or a `../` escape — kdrift maps edits there to consuming overlays and, for `diff`, renders the baseline against a worktree of that external repo at its HEAD (with `chartHome` redirected to the worktree) so drift in the external chart is visible. Baseline semantic: per-repo HEAD-vs-working (your repo at `--ref`, each external repo at its own HEAD, both vs working trees). Sources that cannot be pinned (non-git directory, read-only `.git`, or resolving back into your repo) degrade to a warning instead of a misleading clean result, and are never cached. Git-submodule chart sources are not yet handled.
 
+If the external chart's subchart dependencies are gitignored (`charts/*.tgz` produced by `helm dependency build`, the common convention), kdrift resolves them in the baseline worktree before rendering — primary via `helm dependency build` (ref-correct, cached); if that can't run (offline/auth), deps are copied from the working tree and the baseline is diffed but not cached and a warning notes dependency-version drift is not captured.
+
 ## Delivery Surfaces
 
 | Surface | Invocation | Best for |
