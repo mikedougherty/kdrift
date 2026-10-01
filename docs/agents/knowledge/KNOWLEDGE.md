@@ -144,7 +144,7 @@ concluding "no drift" — the path may simply have missed.
 
 When `kustomize build` fails for one overlay, kdrift reports the error and continues with others. The `error` field is set per-overlay. Exit code is non-zero if any overlay errored.
 
-Baseline build failures (the ref version was already broken) are reported as `"baseline build failed (pre-existing)"` to distinguish from regressions you introduced.
+Baseline build failures (the ref version was already broken) are reported as `"baseline build failed (pre-existing)"` to distinguish from regressions you introduced. The underlying `kustomize`/`helm` stderr is appended so the actual cause is visible. When the failure is an out-of-repo chart whose helm dependencies could not be resolved in the baseline worktree, the message instead reads `"baseline build failed: helm deps unresolved in baseline worktree for chart(s) <name>: <stderr>"` — distinguishing a missing-dependency problem from a genuine pre-existing chart break.
 
 ## Caching
 

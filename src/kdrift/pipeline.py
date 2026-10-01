@@ -59,6 +59,10 @@ class _ExternalPlan:
     unpinnable: dict[Path, str]  # declaring_kust -> reason
     repos: dict[Path, str]  # external repo root -> HEAD sha (dedup)
     deps_from_worktree: set[Path] = dataclasses.field(default_factory=set)  # declaring_kusts
+    # declaring_kust -> chart names whose deps could not be resolved in the baseline
+    # worktree (helm dependency build and the copy fallback both failed); the baseline
+    # render will fail, and these name the chart(s) in that failure message.
+    deps_unresolved: dict[Path, tuple[str, ...]] = dataclasses.field(default_factory=dict)
 
     @property
     def active(self) -> bool:
@@ -315,6 +319,8 @@ def _resolve_external_deps(
             )
             if status == "fallback":
                 plan.deps_from_worktree.add(declaring_kust)
+            elif status == "unresolved":
+                plan.deps_unresolved[declaring_kust] = (*plan.deps_unresolved.get(declaring_kust, ()), name)
 
 
 def _rewrite_chart_homes(
@@ -742,14 +748,16 @@ def _diff_working_tree_vs_ref(  # noqa: PLR0913
                 continue
 
             ext_key, cacheable = _overlay_external(overlay, ext_by_leaf, plan)
-            baseline_output = _render_with_cache(overlay, wt.path, ctx, resolved_ref, ext_key, cacheable)
-            if baseline_output is None:
+            baseline = _render_with_cache(overlay, wt.path, ctx, resolved_ref, ext_key, cacheable)
+            if not baseline.success:
                 overlay_results.append(
-                    models.OverlayResult(path=overlay.path, error="baseline build failed (pre-existing)")
+                    models.OverlayResult(
+                        path=overlay.path, error=_baseline_failure_error(baseline, overlay, plan, ext_by_leaf)
+                    )
                 )
                 continue
 
-            overlay_results.append(diff.diff_rendered(baseline_output, cand_result.output, overlay.path))
+            overlay_results.append(diff.diff_rendered(baseline.output, cand_result.output, overlay.path))
 
 
 def _diff_ref_vs_ref(  # noqa: PLR0913
@@ -782,10 +790,12 @@ def _diff_ref_vs_ref(  # noqa: PLR0913
 
         for overlay in affected:
             ext_key, cacheable = _overlay_external(overlay, ext_by_leaf, plan)
-            baseline_output = _render_with_cache(overlay, base_wt.path, ctx, resolved_base, ext_key, cacheable)
-            if baseline_output is None:
+            baseline = _render_with_cache(overlay, base_wt.path, ctx, resolved_base, ext_key, cacheable)
+            if not baseline.success:
                 overlay_results.append(
-                    models.OverlayResult(path=overlay.path, error="baseline build failed (pre-existing)")
+                    models.OverlayResult(
+                        path=overlay.path, error=_baseline_failure_error(baseline, overlay, plan, ext_by_leaf)
+                    )
                 )
                 continue
 
@@ -815,7 +825,7 @@ def _diff_ref_vs_ref(  # noqa: PLR0913
                 )
                 render.set_cached_render(key, target_output)
 
-            overlay_results.append(diff.diff_rendered(baseline_output, target_output, overlay.path))
+            overlay_results.append(diff.diff_rendered(baseline.output, target_output, overlay.path))
 
 
 def _render_with_cache(  # noqa: PLR0913
@@ -825,12 +835,15 @@ def _render_with_cache(  # noqa: PLR0913
     resolved_ref: str,
     external: list[str] | None = None,
     cacheable: bool = True,
-) -> str | None:
+) -> models.RenderResult:
     """Render an overlay from a worktree, using the cache if available.
 
     ``cacheable`` is False for overlays with un-pinnable external sources: their
     baseline read a live external dir whose state is not in the key, so it must
     be neither served from nor written to the cache.
+
+    Returns the ``RenderResult`` so callers can surface the underlying stderr on
+    failure (a cache hit is returned as a successful result).
     """
     key = render.cache_key(
         resolved_ref,
@@ -844,7 +857,7 @@ def _render_with_cache(  # noqa: PLR0913
     if cacheable:
         cached = render.get_cached_render(key)
         if cached is not None:
-            return cached
+            return models.RenderResult(overlay_path=overlay.path, output=cached, exit_code=0)
 
     result = render.render_overlay(
         overlay.path,
@@ -853,9 +866,29 @@ def _render_with_cache(  # noqa: PLR0913
         ctx.binary,
         ctx.env,
     )
-    if not result.success:
-        return None
-
-    if cacheable:
+    if result.success and cacheable:
         render.set_cached_render(key, result.output)
-    return result.output
+    return result
+
+
+def _baseline_failure_error(
+    result: models.RenderResult,
+    overlay: models.Overlay,
+    plan: _ExternalPlan,
+    ext_by_leaf: dict[Path, list[models.ExternalChartRef]],
+) -> str:
+    """Compose the error for a failed baseline render, surfacing the command stderr.
+
+    When the overlay's external chart deps could not be resolved in the baseline
+    worktree, name the chart(s) and label it a dependency problem (the stderr names
+    the missing dependency); otherwise it is a genuine pre-existing chart break.
+    """
+    unresolved: list[str] = []
+    for ref in ext_by_leaf.get(overlay.path, []):
+        unresolved.extend(plan.deps_unresolved.get(ref.declaring_kust, ()))
+    stderr = (result.error or "").strip()
+    if unresolved:
+        head = f"baseline build failed: helm deps unresolved in baseline worktree for chart(s) {', '.join(unresolved)}"
+    else:
+        head = "baseline build failed (pre-existing)"
+    return f"{head}: {stderr}" if stderr else head
