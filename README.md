@@ -90,7 +90,7 @@ make test        # Tests only
 make typecheck   # mypy strict mode
 ```
 
-See [docs/development.md](docs/development.md) for detailed setup.
+See [docs/development.md](docs/development.md) for detailed setup and the [release process](docs/development.md#releasing) (release-please + RC publishing).
 
 ## Quick Start: MCP Server for Claude Code
 
