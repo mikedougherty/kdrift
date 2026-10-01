@@ -4,7 +4,30 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from kdrift.cli import _parse_ref_range, main
+from kdrift.cli import _parse_ref_range, _version, main
+
+
+@pytest.mark.unit
+class TestVersion:
+    def test_version_flag(self):
+        result = CliRunner().invoke(main, ["--version"])
+        assert result.exit_code == 0
+        assert result.output.strip() == f"kdrift {_version()}"
+
+    def test_version_subcommand(self):
+        result = CliRunner().invoke(main, ["version"])
+        assert result.exit_code == 0
+        assert result.output.strip() == f"kdrift {_version()}"
+
+    def test_version_discoverable_in_help(self):
+        result = CliRunner().invoke(main, ["--help"])
+        assert result.exit_code == 0
+        assert "--version" in result.output
+        assert "version" in result.output  # the subcommand in the Commands list
+
+    def test_version_resolves_for_installed_package(self):
+        # kdrift is installed (editable) in the test env, so metadata exists.
+        assert _version() != "unknown"
 
 
 @pytest.mark.unit

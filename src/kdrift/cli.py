@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import sys
 from pathlib import Path
@@ -16,7 +17,16 @@ from kdrift import watch as kdrift_watch
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
+def _version() -> str:
+    """Return the installed kdrift version, or 'unknown' if metadata is absent."""
+    try:
+        return importlib.metadata.version("kdrift")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
 @click.group()
+@click.version_option(version=_version(), prog_name="kdrift", message="%(prog)s %(version)s")
 @click.option("--log-level", default="WARNING", help="Log level (DEBUG, INFO, WARNING, ERROR).")
 @click.pass_context
 def main(ctx: click.Context, log_level: str) -> None:
@@ -27,6 +37,12 @@ def main(ctx: click.Context, log_level: str) -> None:
     ctx.ensure_object(dict)
     ctx.obj["config"] = cfg
     ctx.obj["log_level"] = log_level
+
+
+@main.command()
+def version() -> None:
+    """Show the kdrift version."""
+    click.echo(f"kdrift {_version()}")
 
 
 def _parse_ref_range(ref: str) -> tuple[str, str | None]:
