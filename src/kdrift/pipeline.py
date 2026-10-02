@@ -328,6 +328,7 @@ def _rewrite_chart_homes(
     worktree_root: Path,
     plan: _ExternalPlan,
     b_worktrees: dict[Path, Path],
+    overridden_kusts: collections.abc.Set[Path] = frozenset(),
 ) -> set[Path]:
     """Set helmGlobals.chartHome in an A worktree to point at the B baseline worktrees.
 
@@ -337,6 +338,12 @@ def _rewrite_chart_homes(
     the set of declaring kustomizations that were actually rewritten; a caller
     must treat any pinnable ref NOT in this set as un-pinnable (its baseline was
     not redirected, so it read the external source live and must not be cached).
+
+    For a flag-overridden kustomization (in ``overridden_kusts``) ``repo:`` is also
+    dropped from its ``helmCharts`` entries so the baseline renders the local chart,
+    matching the candidate patch. This is NOT done for a committed external chartHome:
+    there the candidate renders the live (unpatched) tree, so dropping ``repo:`` only
+    on the baseline would fabricate drift.
     """
     rewritten: set[Path] = set()
     for declaring_kust, dep in plan.pinnable.items():
@@ -354,6 +361,8 @@ def _rewrite_chart_homes(
             globals_field = {}
             data["helmGlobals"] = globals_field
         globals_field["chartHome"] = str(b_worktrees[dep.b_root] / dep.rel)
+        if declaring_kust in overridden_kusts:
+            _strip_helm_chart_repos(data)
         kust_file.write_text(yaml.safe_dump(data, sort_keys=False))
         rewritten.add(declaring_kust)
     return rewritten
@@ -383,12 +392,29 @@ def _find_kustomization_in(directory: Path) -> Path | None:
     return None
 
 
+def _strip_helm_chart_repos(data: dict[str, object]) -> None:
+    """Drop ``repo:`` from every ``helmCharts`` entry so kustomize resolves locally.
+
+    kustomize ignores ``helmGlobals.chartHome`` whenever a ``helmCharts`` entry pins a
+    ``repo:`` (it pulls the remote chart instead), so a chartHome redirect to a local
+    chart only takes effect once ``repo:`` is removed. ``version:`` can stay — kustomize
+    ignores it for a local chart.
+    """
+    charts = data.get("helmCharts")
+    if isinstance(charts, list):
+        for entry in charts:
+            if isinstance(entry, dict):
+                entry.pop("repo", None)
+
+
 @contextlib.contextmanager
 def _patched_chart_homes(repo_root: Path, overrides: dict[Path, str] | None) -> collections.abc.Iterator[None]:
     """Temporarily set ``helmGlobals.chartHome`` in live kustomization files.
 
-    Rewrites each overridden kustomization in place so a candidate render picks up
-    a chartHome that is not committed, then restores each file to its exact original
+    Rewrites each overridden kustomization in place (setting ``chartHome`` and
+    dropping ``repo:`` from its ``helmCharts`` entries, so kustomize renders the
+    local chart rather than a pinned remote) so a candidate render picks up a
+    redirect that is not committed, then restores each file to its exact original
     bytes on exit (including on error). A crash mid-run leaves a modified file, but
     it is git-tracked, so ``git restore`` recovers it. No-op when ``overrides`` is
     empty.
@@ -415,6 +441,7 @@ def _patched_chart_homes(repo_root: Path, overrides: dict[Path, str] | None) -> 
                 globals_field = {}
                 data["helmGlobals"] = globals_field
             globals_field["chartHome"] = home
+            _strip_helm_chart_repos(data)
             originals[kust_file] = original
             kust_file.write_text(yaml.safe_dump(data, sort_keys=False))
         yield
@@ -548,7 +575,9 @@ def run_diff(  # noqa: PLR0913
 
     if target_ref is not None:
         assert resolved_target is not None
-        _diff_ref_vs_ref(affected, ctx, resolved_ref, resolved_target, overlay_results, plan, ext_by_leaf)
+        _diff_ref_vs_ref(
+            affected, ctx, resolved_ref, resolved_target, overlay_results, plan, ext_by_leaf, chart_home_overrides
+        )
     else:
         _diff_working_tree_vs_ref(affected, ctx, resolved_ref, overlay_results, plan, ext_by_leaf, chart_home_overrides)
 
@@ -784,6 +813,7 @@ def _diff_working_tree_vs_ref(  # noqa: PLR0913
     so the candidate renders against the overridden chartHome, then restored to its
     exact original bytes (the baseline worktree is redirected by the external plan).
     """
+    overridden = frozenset(chart_home_overrides or {})
     with _patched_chart_homes(ctx.repo_root, chart_home_overrides):
         candidate_results = render.render_overlays_parallel(affected, ctx.repo_root, ctx.args, env=ctx.env)
 
@@ -791,7 +821,7 @@ def _diff_working_tree_vs_ref(  # noqa: PLR0913
         wt = stack.enter_context(git.Worktree(resolved_ref, ctx.repo_root))
         b_worktrees = _open_external_worktrees(stack, plan)
         if b_worktrees:
-            _demote_unrewritten(plan, _rewrite_chart_homes(wt.path, plan, b_worktrees))
+            _demote_unrewritten(plan, _rewrite_chart_homes(wt.path, plan, b_worktrees, overridden))
             _resolve_external_deps(plan, b_worktrees, ctx.args, ctx.env)
 
         for overlay, cand_result in zip(affected, candidate_results, strict=True):
@@ -822,6 +852,7 @@ def _diff_ref_vs_ref(  # noqa: PLR0913
     overlay_results: list[models.OverlayResult],
     plan: _ExternalPlan,
     ext_by_leaf: dict[Path, list[models.ExternalChartRef]],
+    chart_home_overrides: dict[Path, str] | None = None,
 ) -> None:
     """Compare two committed states using worktrees for both.
 
@@ -831,13 +862,14 @@ def _diff_ref_vs_ref(  # noqa: PLR0913
     a two-committed-A comparison — and the cached target render is keyed with the
     external SHAs so a later working-tree run cannot get a poisoned hit.
     """
+    overridden = frozenset(chart_home_overrides or {})
     with contextlib.ExitStack() as stack:
         base_wt = stack.enter_context(git.Worktree(resolved_base, ctx.repo_root))
         target_wt = stack.enter_context(git.Worktree(resolved_target, ctx.repo_root))
         b_worktrees = _open_external_worktrees(stack, plan)
         if b_worktrees:
-            rewritten = _rewrite_chart_homes(base_wt.path, plan, b_worktrees) & _rewrite_chart_homes(
-                target_wt.path, plan, b_worktrees
+            rewritten = _rewrite_chart_homes(base_wt.path, plan, b_worktrees, overridden) & _rewrite_chart_homes(
+                target_wt.path, plan, b_worktrees, overridden
             )
             _demote_unrewritten(plan, rewritten)
             _resolve_external_deps(plan, b_worktrees, ctx.args, ctx.env)
