@@ -53,9 +53,17 @@ class DependencyGraph:
     are directories that no other kustomization.yaml references.
     """
 
-    def __init__(self, repo_root: Path) -> None:
-        """Initialize with the repository root path."""
+    def __init__(self, repo_root: Path, chart_home_overrides: dict[Path, str] | None = None) -> None:
+        """Initialize with the repository root path.
+
+        ``chart_home_overrides`` maps a declaring-kustomization directory (repo-relative)
+        to a ``helmGlobals.chartHome`` value that overrides whatever the committed
+        kustomization declares, so a chart under test in another local checkout is seen
+        as external without committing the redirect. Same path semantics as a committed
+        chartHome (resolved relative to the kustomization dir unless absolute).
+        """
         self.repo_root = repo_root
+        self._chart_home_overrides = chart_home_overrides or {}
         self._file_to_overlays: dict[Path, set[Path]] = {}
         self._dir_to_overlays: dict[Path, set[Path]] = {}
         self._subtree_to_overlays: dict[Path, set[Path]] = {}
@@ -80,7 +88,7 @@ class DependencyGraph:
             self._kust_file_cache[overlay_dir] = kust_file
 
             try:
-                refs = _parse_references(kust_file, self.repo_root)
+                refs = _parse_references(kust_file, self.repo_root, self._chart_home_overrides.get(overlay_dir))
             except yaml.YAMLError:
                 log.warning("malformed_kustomization", path=str(kust_file))
                 continue
@@ -337,7 +345,7 @@ def _is_parent_of(parent: Path, child: Path) -> bool:
     return parent != child
 
 
-def _parse_references(kust_file: Path, repo_root: Path) -> _KustRefs:
+def _parse_references(kust_file: Path, repo_root: Path, chart_home_override: str | None = None) -> _KustRefs:
     """Extract all file/directory and subtree references from a kustomization.yaml."""
     with kust_file.open() as f:
         data = yaml.load(f, Loader=safe_loader)
@@ -351,7 +359,9 @@ def _parse_references(kust_file: Path, repo_root: Path) -> _KustRefs:
     files.extend(_collect_string_list_refs(data, kust_dir))
     files.extend(_collect_patch_refs(data, kust_dir))
     files.extend(_collect_generator_refs(data, kust_dir))
-    values_files, subtrees, external_home, external_chart_names = _collect_helm_refs(data, kust_dir, repo_root)
+    values_files, subtrees, external_home, external_chart_names = _collect_helm_refs(
+        data, kust_dir, repo_root, chart_home_override
+    )
     files.extend(values_files)
     files.extend(_collect_replacement_refs(data, kust_dir))
     files.extend(_collect_openapi_refs(data, kust_dir))
@@ -438,7 +448,7 @@ DEFAULT_CHART_HOME = "charts"
 
 
 def _collect_helm_refs(
-    data: dict[str, object], kust_dir: Path, repo_root: Path
+    data: dict[str, object], kust_dir: Path, repo_root: Path, chart_home_override: str | None = None
 ) -> tuple[list[Path], list[Path], Path | None, tuple[str, ...]]:
     """Collect helmCharts inputs: values files, chart directories, external home.
 
@@ -463,7 +473,7 @@ def _collect_helm_refs(
     if not isinstance(helm_charts, list):
         return values_files, subtrees, None, ()
 
-    chart_home = _chart_home(data)
+    chart_home = chart_home_override if chart_home_override is not None else _chart_home(data)
     home_abs, is_external = _resolve_chart_home(repo_root, kust_dir, chart_home)
 
     for chart in helm_charts:

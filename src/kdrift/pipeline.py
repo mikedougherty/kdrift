@@ -6,6 +6,7 @@ Called by CLI, watch mode, and future MCP/LSP servers.
 
 from __future__ import annotations
 
+import collections.abc
 import contextlib
 import dataclasses
 import os.path
@@ -382,6 +383,46 @@ def _find_kustomization_in(directory: Path) -> Path | None:
     return None
 
 
+@contextlib.contextmanager
+def _patched_chart_homes(repo_root: Path, overrides: dict[Path, str] | None) -> collections.abc.Iterator[None]:
+    """Temporarily set ``helmGlobals.chartHome`` in live kustomization files.
+
+    Rewrites each overridden kustomization in place so a candidate render picks up
+    a chartHome that is not committed, then restores each file to its exact original
+    bytes on exit (including on error). A crash mid-run leaves a modified file, but
+    it is git-tracked, so ``git restore`` recovers it. No-op when ``overrides`` is
+    empty.
+    """
+    if not overrides:
+        yield
+        return
+
+    originals: dict[Path, bytes] = {}
+    try:
+        for declaring_kust, home in overrides.items():
+            kust_file = _find_kustomization_in(repo_root / declaring_kust)
+            if kust_file is None:
+                continue
+            original = kust_file.read_bytes()
+            try:
+                data = yaml.safe_load(original.decode()) or {}
+            except yaml.YAMLError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            globals_field = data.get("helmGlobals")
+            if not isinstance(globals_field, dict):
+                globals_field = {}
+                data["helmGlobals"] = globals_field
+            globals_field["chartHome"] = home
+            originals[kust_file] = original
+            kust_file.write_text(yaml.safe_dump(data, sort_keys=False))
+        yield
+    finally:
+        for kust_file, original in originals.items():
+            kust_file.write_bytes(original)
+
+
 def run_diff(  # noqa: PLR0913
     repo_root: Path,
     ref: str = "HEAD",
@@ -390,6 +431,7 @@ def run_diff(  # noqa: PLR0913
     kustomize_args: list[str] | None = None,
     target_ref: str | None = None,
     kustomize_env: dict[str, str] | None = None,
+    chart_home_overrides: dict[Path, str] | None = None,
 ) -> models.DiffResult:
     """Run the full discover -> render -> diff pipeline.
 
@@ -410,6 +452,12 @@ def run_diff(  # noqa: PLR0913
         target_ref: When set, compare ref vs target_ref (two committed states)
             instead of ref vs working tree.
         kustomize_env: Extra env vars to inject into kustomize subprocesses.
+        chart_home_overrides: Map a declaring-kustomization dir (repo-relative) to a
+            ``helmGlobals.chartHome`` value applied for this run only, so a chart under
+            test in another local checkout is diffed without committing the redirect.
+            Opt-in: when set, the live kustomization.yaml is briefly rewritten to render
+            the candidate (restored immediately after), and the baseline worktree is
+            redirected to the external repo at its HEAD.
 
     Returns:
         DiffResult with per-overlay, per-resource changes.
@@ -437,7 +485,7 @@ def run_diff(  # noqa: PLR0913
 
     warnings = _nonexistent_path_warnings(paths, repo_root) if paths else []
 
-    graph = discover.DependencyGraph(repo_root)
+    graph = discover.DependencyGraph(repo_root, chart_home_overrides)
     graph.build()
 
     # Out-of-repo chart sources: resolve to owning git repos, and fold their
@@ -502,7 +550,7 @@ def run_diff(  # noqa: PLR0913
         assert resolved_target is not None
         _diff_ref_vs_ref(affected, ctx, resolved_ref, resolved_target, overlay_results, plan, ext_by_leaf)
     else:
-        _diff_working_tree_vs_ref(affected, ctx, resolved_ref, overlay_results, plan, ext_by_leaf)
+        _diff_working_tree_vs_ref(affected, ctx, resolved_ref, overlay_results, plan, ext_by_leaf, chart_home_overrides)
 
     # Emit these warnings AFTER the diff: the render step mutates the plan at
     # runtime — demoting a pinnable source (worktree-add failure or un-rewritable
@@ -723,6 +771,7 @@ def _diff_working_tree_vs_ref(  # noqa: PLR0913
     overlay_results: list[models.OverlayResult],
     plan: _ExternalPlan,
     ext_by_leaf: dict[Path, list[models.ExternalChartRef]],
+    chart_home_overrides: dict[Path, str] | None = None,
 ) -> None:
     """Compare working tree against a baseline ref.
 
@@ -730,8 +779,13 @@ def _diff_working_tree_vs_ref(  # noqa: PLR0913
     render from an A worktree at ``resolved_ref`` whose ``chartHome`` is redirected
     to a worktree of each pinnable external repo at its HEAD, so external drift is
     visible.
+
+    With ``chart_home_overrides``, the live kustomization.yaml is briefly rewritten
+    so the candidate renders against the overridden chartHome, then restored to its
+    exact original bytes (the baseline worktree is redirected by the external plan).
     """
-    candidate_results = render.render_overlays_parallel(affected, ctx.repo_root, ctx.args, env=ctx.env)
+    with _patched_chart_homes(ctx.repo_root, chart_home_overrides):
+        candidate_results = render.render_overlays_parallel(affected, ctx.repo_root, ctx.args, env=ctx.env)
 
     with contextlib.ExitStack() as stack:
         wt = stack.enter_context(git.Worktree(resolved_ref, ctx.repo_root))

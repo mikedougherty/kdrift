@@ -402,6 +402,51 @@ class TestRenderWithCache:
 
 
 @pytest.mark.unit
+class TestPatchedChartHomes:
+    """Test the live chartHome temp-patch context manager."""
+
+    def test_noop_when_empty(self, tmp_path):
+        kust = tmp_path / "app" / "kustomization.yaml"
+        kust.parent.mkdir()
+        original = "helmCharts:\n  - name: mychart\n"
+        kust.write_text(original)
+
+        with pipeline._patched_chart_homes(tmp_path, None):
+            assert kust.read_text() == original
+        assert kust.read_text() == original
+
+    def test_patches_then_restores_exact_bytes(self, tmp_path):
+        kust = tmp_path / "app" / "kustomization.yaml"
+        kust.parent.mkdir()
+        original = "helmCharts:\n  - name: mychart\n"  # no trailing reformat
+        kust.write_bytes(original.encode())
+
+        with pipeline._patched_chart_homes(tmp_path, {Path("app"): "/ext/charts"}):
+            patched = kust.read_text()
+            assert "chartHome: /ext/charts" in patched
+            assert "mychart" in patched
+
+        assert kust.read_bytes() == original.encode()
+
+    def test_restores_on_exception(self, tmp_path):
+        kust = tmp_path / "app" / "kustomization.yaml"
+        kust.parent.mkdir()
+        original = "helmGlobals:\n  chartHome: charts\nhelmCharts:\n  - name: mychart\n"
+        kust.write_bytes(original.encode())
+
+        with pytest.raises(RuntimeError), pipeline._patched_chart_homes(tmp_path, {Path("app"): "/ext/charts"}):
+            assert "chartHome: /ext/charts" in kust.read_text()
+            raise RuntimeError("boom")
+
+        assert kust.read_bytes() == original.encode()
+
+    def test_missing_kustomization_is_skipped(self, tmp_path):
+        # An override naming a dir with no kustomization.yaml is a no-op, not a crash.
+        with pipeline._patched_chart_homes(tmp_path, {Path("nope"): "/ext/charts"}):
+            pass
+
+
+@pytest.mark.unit
 class TestBaselineFailureError:
     """Test the baseline-failure message composition."""
 

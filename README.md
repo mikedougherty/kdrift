@@ -65,6 +65,11 @@ drift that reaches it through a shared base.
 
 If an overlay's chart source lives in a separate local git checkout (an absolute `helmGlobals.chartHome`, an escaping symlink, or a `../` escape), kdrift renders the baseline against a worktree of that repo at its HEAD so drift in the external chart shows up too — baseline = your repo at `--ref` + each external repo at its HEAD, vs the working trees. A chart source that can't be pinned (non-git, read-only, or resolving back into your repo) is reported in `warnings` rather than silently treated as clean. See [`docs/design/multi-repo-diff.md`](docs/design/multi-repo-diff.md).
 
+**The chartHome redirect must exist at the baseline ref.** The baseline is your consumer repo at `--ref` (default HEAD). If the `helmGlobals.chartHome` redirect to the local chart under test exists only in your working tree, the baseline still renders from the original source (e.g. an OCI `repo:`) while the candidate renders from the local chart — so the diff is "OCI chart vs local chart" (everything), not "my chart edit". Two ways to get a clean loop:
+
+- **Commit the redirect on a test branch**, then iterate: point `helmGlobals.chartHome` at the local chart, commit on a throwaway branch of the consumer, and run `kdrift diff` as you edit the chart.
+- **Use `--chart-home` (no commit needed)**: `kdrift diff --chart-home <kustomization-dir>=<path-to-local-charts>` applies the redirect for that run only — to both the baseline worktree (redirected to the external repo at HEAD) and the candidate. It is opt-in and repeatable. To apply it to the candidate, kdrift briefly rewrites the live `kustomization.yaml`, then restores it to its exact original bytes; if the run is interrupted mid-render the file is left modified, but it is git-tracked, so `git restore <file>` recovers it. Not supported with `--watch`.
+
 ## Configuration
 
 Create `.kdrift.yaml` anywhere in your directory tree (searched upward from CWD):

@@ -127,6 +127,26 @@ class TestChartSubtreeWatches:
         affected = graph.affected_overlays([changed])
         assert {str(o.path) for o in affected} == {"app"}
 
+    def test_chart_home_override_makes_in_repo_chart_external(self, tmp_path):
+        # A committed kustomization points chartHome at an in-repo dir; the override
+        # redirects it to an out-of-repo checkout, so it is seen as external.
+        repo = tmp_path / "repo"
+        app = repo / "app"
+        app.mkdir(parents=True)
+        (app / "kustomization.yaml").write_text("helmCharts:\n  - name: mychart\n")
+        self._write_local_chart(app / "charts" / "mychart")
+        ext_home = tmp_path / "ext"
+        self._write_local_chart(ext_home / "mychart")
+
+        graph = discover.DependencyGraph(repo, {Path("app"): str(ext_home)})
+        graph.build()
+
+        refs = graph.external_chart_refs()
+        assert len(refs) == 1
+        assert refs[0].declaring_kust == Path("app")
+        assert refs[0].chart_home_abs == ext_home.resolve()
+        assert refs[0].chart_names == ("mychart",)
+
     def test_external_sources_reports_out_of_repo_dep(self, tmp_path):
         repo = tmp_path / "repo"
         app = repo / "app"

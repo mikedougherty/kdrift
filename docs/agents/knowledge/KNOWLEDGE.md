@@ -20,6 +20,10 @@ Kustomize manifest drift detection. Shows exactly what your kustomize edits will
 
 If the external chart's subchart dependencies are gitignored (`charts/*.tgz` produced by `helm dependency build`, the common convention), kdrift resolves them in the baseline worktree before rendering — primary via `helm dependency build` (ref-correct, cached); if that can't run (offline/auth), deps are copied from the working tree and the baseline is diffed but not cached and a warning notes dependency-version drift is not captured.
 
+**The chartHome redirect must exist at the baseline ref.** The baseline is the consumer repo at `--ref` (default HEAD). A `helmGlobals.chartHome` redirect to a local chart under test that exists only in the working tree is NOT seen by the baseline render — the baseline renders from the original source (e.g. an OCI `repo:`) while the candidate renders from the local chart, so the diff is "OCI chart vs local chart" (everything), not the chart edit. For a clean edit-and-diff loop, either commit the redirect on a throwaway/test branch of the consumer and iterate, or use the `--chart-home` override so it need not be committed.
+
+**`--chart-home` override (opt-in)**: `kdrift diff --chart-home <kustomization-dir>=<chartHome-path>` (CLI, repeatable) or the `chart_home` map on `kdrift_diff` (MCP) applies a chartHome redirect for that run only, to both the baseline (worktree redirected to the external repo at HEAD) and the candidate. `<kustomization-dir>` is the declaring kustomization dir (repo-relative); the path has the same semantics as a committed `chartHome`. Applying it to the candidate means briefly rewriting the live `kustomization.yaml`, then restoring it to its exact original bytes; an interrupted run leaves the file modified but it is git-tracked (`git restore` recovers it). Not supported with `--watch`.
+
 ## Delivery Surfaces
 
 | Surface | Invocation | Best for |
@@ -97,7 +101,7 @@ Add `--debug` to enable file logging to `~/.cache/kdrift/kdrift.log`.
 
 | Tool | Description |
 |------|-------------|
-| `kdrift_diff` | Diff overlays against a baseline ref. Returns per-overlay, per-resource structured JSON plus a `warnings` list. Supports `target_ref` for two-ref comparison. `paths` narrows the reported overlays (by overlay dir, file within, or upstream base) against the full affected set — transitive base drift is preserved, and unmatched/drift-free paths surface as warnings, not a silent empty. `overlay` force-diffs exactly one overlay. Detects drift in out-of-repo helm charts (chart source in another local git checkout) and warns when such a source can't be pinned to a baseline. |
+| `kdrift_diff` | Diff overlays against a baseline ref. Returns per-overlay, per-resource structured JSON plus a `warnings` list. Supports `target_ref` for two-ref comparison. `paths` narrows the reported overlays (by overlay dir, file within, or upstream base) against the full affected set — transitive base drift is preserved, and unmatched/drift-free paths surface as warnings, not a silent empty. `overlay` force-diffs exactly one overlay. Detects drift in out-of-repo helm charts (chart source in another local git checkout) and warns when such a source can't be pinned to a baseline. `chart_home` (opt-in map) overrides `helmGlobals.chartHome` for the run so a chart under test in another local checkout is diffed without committing the redirect. |
 | `kdrift_discover` | Find leaf overlays. Defaults to git-changed overlays; `show_all=true` for the full list. |
 | `kdrift_affected` | Given a list of changed files, find which overlays are affected. Accepts absolute paths, including files under an out-of-repo chart directory. |
 | `kdrift_render` | Render a single overlay to YAML. |
