@@ -412,6 +412,39 @@ class TestRewriteChartHomes:
         assert data["helmGlobals"]["chartHome"] == "/tmp/bwt/charts"
         assert data["helmCharts"] == [{"name": "foo"}]
 
+    def test_keeps_repo_for_committed_external_chart(self, tmp_path):
+        # Not a flag override: a committed external chartHome. The candidate renders the
+        # live (unpatched) tree, so dropping repo: only on the baseline would fabricate
+        # drift. repo: must stay.
+        wt = tmp_path / "wt"
+        base = wt / "base"
+        base.mkdir(parents=True)
+        (base / "kustomization.yaml").write_text("helmCharts:\n  - name: foo\n    repo: oci://example.com\n")
+        dep = pipeline._ExternalDep(Path("base"), Path("/b"), "sha", Path("charts"), ())
+        plan = pipeline._ExternalPlan(pinnable={Path("base"): dep}, unpinnable={}, repos={Path("/b"): "sha"})
+
+        pipeline._rewrite_chart_homes(wt, plan, {Path("/b"): Path("/tmp/bwt")})
+
+        data = yaml.safe_load((base / "kustomization.yaml").read_text())
+        assert data["helmCharts"][0].get("repo") == "oci://example.com"
+
+    def test_drops_repo_for_overridden_kust(self, tmp_path):
+        # Flag override: candidate is patched to match, so the baseline must also drop
+        # repo: or kustomize ignores chartHome and renders the pinned remote on both
+        # sides (the #29 silent-no-op bug).
+        wt = tmp_path / "wt"
+        base = wt / "base"
+        base.mkdir(parents=True)
+        (base / "kustomization.yaml").write_text("helmCharts:\n  - name: foo\n    repo: oci://example.com\n")
+        dep = pipeline._ExternalDep(Path("base"), Path("/b"), "sha", Path("charts"), ())
+        plan = pipeline._ExternalPlan(pinnable={Path("base"): dep}, unpinnable={}, repos={Path("/b"): "sha"})
+
+        pipeline._rewrite_chart_homes(wt, plan, {Path("/b"): Path("/tmp/bwt")}, frozenset({Path("base")}))
+
+        data = yaml.safe_load((base / "kustomization.yaml").read_text())
+        assert "repo" not in data["helmCharts"][0]
+        assert data["helmGlobals"]["chartHome"] == "/tmp/bwt/charts"
+
 
 @requires_e2e
 @pytest.mark.integration
@@ -446,6 +479,39 @@ class TestMultiRepoDiffE2E:
         (b / "charts" / "foo" / "values.yaml").write_text("image: nginx:2.0.0\n")
 
         result = pipeline.run_diff(a)
+        assert result.has_changes
+        assert any(o.path == Path("app") for o in result.overlays if o.has_changes)
+
+    def test_chart_home_override_with_pinned_repo_shows_drift(self, tmp_path, monkeypatch):
+        # #29 regression: consumer pins repo: oci://... and the chartHome redirect to the
+        # local chart is NOT committed (supplied via --chart-home). The override must drop
+        # repo: on both sides so kustomize renders the local chart, not the pinned remote.
+        # repo: points at an unreachable registry, so if repo: survived, the render would
+        # fail rather than silently pass — either way, no clean "no drift".
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        b = tmp_path / "repoB"
+        _init_repo(b)
+        _write_chart(b / "charts" / "foo", image="nginx:1.0.0")
+        _commit_all(b, "chart 1.0.0")
+
+        a = tmp_path / "repoA"
+        app = a / "app"
+        app.mkdir(parents=True)
+        # Committed consumer pins a remote repo: and no usable local chartHome.
+        (app / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n"
+            "helmCharts:\n  - name: foo\n    releaseName: foo\n"
+            "    repo: oci://unreachable.invalid\n    version: 9.9.9\n"
+        )
+        _init_repo(a)
+        _commit_all(a, "A init")
+
+        # Edit B's chart in the working tree (uncommitted).
+        (b / "charts" / "foo" / "values.yaml").write_text("image: nginx:2.0.0\n")
+
+        result = pipeline.run_diff(a, chart_home_overrides={Path("app"): str(b / "charts")})
+
+        assert not result.has_errors
         assert result.has_changes
         assert any(o.path == Path("app") for o in result.overlays if o.has_changes)
 

@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+import yaml
 
 from kdrift import discover, models, pipeline
 
@@ -444,6 +445,22 @@ class TestPatchedChartHomes:
         # An override naming a dir with no kustomization.yaml is a no-op, not a crash.
         with pipeline._patched_chart_homes(tmp_path, {Path("nope"): "/ext/charts"}):
             pass
+
+    def test_strips_repo_from_helm_charts(self, tmp_path):
+        # #29: a pinned repo: makes kustomize ignore chartHome and render the remote
+        # chart, so the override must drop repo: on the candidate (restored after).
+        kust = tmp_path / "app" / "kustomization.yaml"
+        kust.parent.mkdir()
+        original = "helmCharts:\n  - name: mychart\n    repo: oci://example.com\n    version: 1.0.0\n"
+        kust.write_bytes(original.encode())
+
+        with pipeline._patched_chart_homes(tmp_path, {Path("app"): "/ext/charts"}):
+            patched = yaml.safe_load(kust.read_text())
+            assert "repo" not in patched["helmCharts"][0]
+            assert patched["helmCharts"][0]["version"] == "1.0.0"  # version left as-is
+            assert patched["helmGlobals"]["chartHome"] == "/ext/charts"
+
+        assert kust.read_bytes() == original.encode()
 
 
 @pytest.mark.unit
