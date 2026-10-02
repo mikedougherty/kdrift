@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/mikedougherty/kdrift/compare/v0.1.6...v0.1.7) (2026-10-02)
+
+
+### Documentation
+
+* note that the PyPI publish needs a manual dispatch ([268f3a6](https://github.com/mikedougherty/kdrift/commit/268f3a6a7cefa3703b616ef545933fb17ffadc78))
+
 ## [0.1.6](https://github.com/mikedougherty/kdrift/compare/v0.1.5...v0.1.6) (2026-10-02)
 
 
