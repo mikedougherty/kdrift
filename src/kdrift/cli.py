@@ -56,6 +56,18 @@ def _parse_ref_range(ref: str) -> tuple[str, str | None]:
     return ref, None
 
 
+def _parse_chart_home(entries: tuple[str, ...]) -> dict[Path, str]:
+    """Parse ``KUST_DIR=PATH`` --chart-home entries into a {kust_dir: chartHome} map."""
+    overrides: dict[Path, str] = {}
+    for entry in entries:
+        key, sep, value = entry.partition("=")
+        if not sep or not key or not value:
+            msg = f"invalid --chart-home '{entry}': expected KUST_DIR=PATH"
+            raise ValueError(msg)
+        overrides[Path(key)] = value
+    return overrides
+
+
 @main.command()
 @click.argument("paths", nargs=-1, type=click.Path(exists=False))
 @click.option("--repo", "-C", "repo_path", type=click.Path(exists=True), default=None, help="Repository root.")
@@ -75,8 +87,22 @@ def _parse_ref_range(ref: str) -> tuple[str, str | None]:
 )
 @click.option("--watch", "watch_mode", is_flag=True, help="Watch for changes and re-diff continuously.")
 @click.option("--check", is_flag=True, help="Exit non-zero if any overlay has drift (CI/pre-commit mode).")
+@click.option(
+    "--chart-home",
+    "chart_home",
+    multiple=True,
+    metavar="KUST_DIR=PATH",
+    help=(
+        "Override helmGlobals.chartHome for a kustomization for this run only, so a chart "
+        "under test in another local checkout is diffed without committing the redirect. "
+        "KUST_DIR is the declaring kustomization dir (repo-relative); PATH is the chartHome "
+        "(same semantics as a committed value). Repeatable. Opt-in: this briefly rewrites the "
+        "live kustomization.yaml to render the candidate, then restores it (git-tracked, so "
+        "`git restore` recovers it if interrupted)."
+    ),
+)
 @click.pass_context
-def diff(
+def diff(  # noqa: C901
     ctx: click.Context,
     paths: tuple[str, ...],
     repo_path: str | None,
@@ -85,6 +111,7 @@ def diff(
     output_format: str,
     watch_mode: bool,
     check: bool,
+    chart_home: tuple[str, ...],
 ) -> None:
     """Diff kustomize overlays against a baseline ref.
 
@@ -112,9 +139,18 @@ def diff(
     proj_config = config.resolve_project_config(config.load_project_config(repo_root))
     path_list = [Path(p) for p in paths] if paths else None
 
+    try:
+        chart_home_overrides = _parse_chart_home(chart_home)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
     if watch_mode:
         if target_ref is not None:
             click.echo("Error: --watch is not supported with ref ranges (A..B)", err=True)
+            sys.exit(1)
+        if chart_home_overrides:
+            click.echo("Error: --chart-home is not supported with --watch", err=True)
             sys.exit(1)
         kdrift_watch.watch(
             repo_root=repo_root,
@@ -137,6 +173,7 @@ def diff(
             kustomize_args=proj_config.kustomize_args,
             target_ref=target_ref,
             kustomize_env=proj_config.env or None,
+            chart_home_overrides=chart_home_overrides or None,
         )
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

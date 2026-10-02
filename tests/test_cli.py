@@ -1,10 +1,12 @@
 """Tests for the CLI entrypoint."""
 
+from pathlib import Path
+
 import click
 import pytest
 from click.testing import CliRunner
 
-from kdrift.cli import _parse_ref_range, _version, main
+from kdrift.cli import _parse_chart_home, _parse_ref_range, _version, main
 
 
 @pytest.mark.unit
@@ -59,6 +61,35 @@ class TestParseRefRange:
         base, target = _parse_ref_range("origin/main..feature/foo")
         assert base == "origin/main"
         assert target == "feature/foo"
+
+
+@pytest.mark.unit
+class TestParseChartHome:
+    def test_single(self):
+        assert _parse_chart_home(("k8s/app=/ext/charts",)) == {Path("k8s/app"): "/ext/charts"}
+
+    def test_multiple(self):
+        result = _parse_chart_home(("a=/x", "b=/y"))
+        assert result == {Path("a"): "/x", Path("b"): "/y"}
+
+    def test_value_with_equals_sign(self):
+        # Only the first '=' splits; the path may itself contain '='.
+        assert _parse_chart_home(("app=/ext/a=b",)) == {Path("app"): "/ext/a=b"}
+
+    def test_empty(self):
+        assert _parse_chart_home(()) == {}
+
+    def test_missing_equals_raises(self):
+        with pytest.raises(ValueError, match="expected KUST_DIR=PATH"):
+            _parse_chart_home(("noequals",))
+
+    def test_empty_key_raises(self):
+        with pytest.raises(ValueError, match="expected KUST_DIR=PATH"):
+            _parse_chart_home(("=/ext",))
+
+    def test_empty_value_raises(self):
+        with pytest.raises(ValueError, match="expected KUST_DIR=PATH"):
+            _parse_chart_home(("app=",))
 
 
 @pytest.mark.unit

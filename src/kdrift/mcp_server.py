@@ -47,15 +47,21 @@ server = MCPServer(
         "another local git checkout, drift in that chart is detected too (baseline rendered "
         "against the external repo at its HEAD). A source that can't be pinned (non-git, "
         "read-only, or resolving back into the repo) is surfaced in 'warnings' and its drift "
-        "is not captured."
+        "is not captured.\n\n"
+        "chart_home (opt-in): map a declaring-kustomization dir (repo-relative) to a chartHome "
+        "value applied for this run only, to diff a chart under test in another local checkout "
+        'without committing the redirect, e.g. {"k8s/consumer": "/abs/path/to/charts"}. This '
+        "briefly rewrites the live kustomization.yaml to render the candidate, then restores it "
+        "to its exact original bytes (git-tracked, so `git restore` recovers it if interrupted)."
     ),
 )
-def kdrift_diff(
+def kdrift_diff(  # noqa: PLR0913
     repo_path: str,
     ref: str = "HEAD",
     paths: list[str] | None = None,
     overlay: str | None = None,
     target_ref: str | None = None,
+    chart_home: dict[str, str] | None = None,
 ) -> str:
     """Run the full diff pipeline and return structured JSON results.
 
@@ -71,12 +77,16 @@ def kdrift_diff(
             Takes precedence over paths.
         target_ref: When provided, compare ref (baseline) vs target_ref
             (two committed states) instead of ref vs working tree.
+        chart_home: Opt-in map of declaring-kustomization dir (repo-relative) to a
+            helmGlobals.chartHome value applied for this run only. Briefly rewrites
+            the live kustomization.yaml to render the candidate, then restores it.
     """
     repo_root = git.find_repo_root(Path(repo_path))
     proj_config = config.resolve_project_config(config.load_project_config(repo_root))
 
     path_list = [Path(p) for p in paths] if paths else None
     overlay_filter = Path(overlay) if overlay else None
+    chart_home_overrides = {Path(k): v for k, v in chart_home.items()} if chart_home else None
 
     result = pipeline.run_diff(
         repo_root=repo_root,
@@ -86,6 +96,7 @@ def kdrift_diff(
         kustomize_args=proj_config.kustomize_args,
         target_ref=target_ref,
         kustomize_env=proj_config.env or None,
+        chart_home_overrides=chart_home_overrides,
     )
 
     return result.model_dump_json(indent=2)
