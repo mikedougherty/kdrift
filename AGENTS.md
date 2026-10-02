@@ -103,7 +103,19 @@ While the project is pre-1.0, `bump-minor-pre-major` and `bump-patch-for-minor-p
 1. Push commits with releasable types (`feat:`, `fix:`) to main
 2. Release-please automatically opens or updates a Release PR
 3. Review and merge the Release PR when ready to cut a release
-4. Tag, GitHub release, and PyPI publish happen automatically
+4. Release-please creates the git tag + GitHub release automatically
+5. **Manually dispatch the PyPI publish** — it does NOT auto-trigger (see below):
+   ```bash
+   gh workflow run publish.yaml --ref v<VERSION>   # e.g. --ref v0.1.6
+   ```
+
+> **The PyPI publish does NOT fire on the release.** `publish.yaml` is wired to
+> `on: release: published`, but release-please creates the release with the default
+> `GITHUB_TOKEN`, and GitHub suppresses workflow triggers from token-created events
+> (anti-recursion). So merging the Release PR cuts the tag + GitHub release but
+> leaves nothing on PyPI until you dispatch `publish.yaml` yourself (it builds from
+> the ref's `pyproject.toml`, so dispatch against the `v<VERSION>` tag). Every stable
+> publish to date has been a manual `workflow_dispatch`.
 
 #### Configuration files
 
@@ -112,7 +124,7 @@ While the project is pre-1.0, `bump-minor-pre-major` and `bump-patch-for-minor-p
 | `release-please-config.json` | Release strategy, version bump rules, changelog path |
 | `.release-please-manifest.json` | Tracks current version (updated by release-please) |
 | `.github/workflows/release-please.yml` | Runs release-please on every push to main |
-| `.github/workflows/publish.yml` | Builds and publishes to PyPI on GitHub release |
+| `.github/workflows/publish.yaml` | Builds + publishes to PyPI. Wired to `release: published` but that does NOT fire for release-please's token-created release — dispatch it manually (`gh workflow run publish.yaml --ref v<VERSION>`). |
 | `.github/workflows/publish-rc.yml` | Manual workflow to publish RC versions to PyPI |
 
 #### RC (release candidate) releases
